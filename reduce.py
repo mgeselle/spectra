@@ -8,6 +8,7 @@ import tkutil
 from typing import Union
 import bgexec
 from dark import Dark
+from flat import Flat
 from progress import Progress
 from rotate import Rotate
 
@@ -32,9 +33,17 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
     rot_prefix = 'rot-'
     if not progress.is_cancelled():
         rot = Rotate(output_dir, dark_prefix + program)
-        input_names = [dark_prefix + flat_basename, dark_prefix + calibration,
+        input_names = [dark_prefix + calibration,
                        dark_prefix + program]
+        if flat_basename is not None:
+            input_names.append(dark_prefix + flat_basename)
         rot.rotate(output_dir, input_names, output_dir, rot_prefix)
+
+    if not progress.is_cancelled() and flat_basename is not None:
+        flt = Flat(progress, output_dir, rot_prefix + dark_prefix + flat_basename)
+        input_names = [rot_prefix + dark_prefix + calibration, rot_prefix + dark_prefix + program]
+        flt.apply(input_names)
+        flt.destroy()
 
     event = bgexec.Event(bgexec.FINISHED, 'Data reduction complete.')
     status_queue.put(event)
