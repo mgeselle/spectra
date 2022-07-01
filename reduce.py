@@ -11,6 +11,7 @@ from dark import Dark
 from flat import Flat
 from progress import Progress
 from rotate import Rotate
+from slant import Slant
 
 
 def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str, None],
@@ -25,25 +26,36 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
         evt = bgexec.Event(bgexec.INFO, msg)
         status_queue.put(evt)
 
-    dark_prefix = 'drk-'
+    cumul_pfx = ''
     if not progress.is_cancelled():
+        dark_prefix = 'drk-'
         dark = Dark(master_dir, bias_basename, dark_basename)
         dark.correct(input_dir, output_dir, dark_prefix, callback)
+        cumul_pfx = dark_prefix
 
-    rot_prefix = 'rot-'
     if not progress.is_cancelled():
-        rot = Rotate(output_dir, dark_prefix + program)
-        input_names = [dark_prefix + calibration,
-                       dark_prefix + program]
+        rot_prefix = 'rot-'
+        rot = Rotate(output_dir, cumul_pfx + program)
+        input_names = [cumul_pfx + calibration,
+                       cumul_pfx + program]
         if flat_basename is not None:
-            input_names.append(dark_prefix + flat_basename)
+            input_names.append(cumul_pfx + flat_basename)
         rot.rotate(output_dir, input_names, output_dir, rot_prefix)
+        cumul_pfx = rot_prefix + cumul_pfx
 
     if not progress.is_cancelled() and flat_basename is not None:
-        flt = Flat(progress, output_dir, rot_prefix + dark_prefix + flat_basename)
-        input_names = [rot_prefix + dark_prefix + calibration, rot_prefix + dark_prefix + program]
-        flt.apply(input_names)
+        flt = Flat(progress, output_dir, cumul_pfx + flat_basename)
+        input_names = [cumul_pfx + calibration, cumul_pfx + program]
+        flat_prefix = 'flt-'
+        flt.apply(input_names, prefix=flat_prefix)
         flt.destroy()
+        cumul_pfx = flat_prefix + cumul_pfx
+
+    if not progress.is_cancelled():
+        slt = Slant(output_dir, cumul_pfx + calibration)
+        input_names = [cumul_pfx + calibration, cumul_pfx + program]
+        slant_prefix = 'slt-'
+        slt.apply(input_names, prefix=slant_prefix)
 
     event = bgexec.Event(bgexec.FINISHED, 'Data reduction complete.')
     status_queue.put(event)
