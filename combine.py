@@ -1,27 +1,52 @@
-import ccdproc as ccd
+from astropy.io import fits
 from functools import partial
+import numpy as np
+import numpy.typing as npt
+from os import PathLike
 from pathlib import Path
 import queue
 import tkinter as tk
 from tkinter import ttk
 import tkinter.messagebox as mb
+from typing import Union, Any
 import bgexec
 import tkutil
 
 
-def _do_combine_bg(in_dir, in_basename, out_dir, out_name, mode):
+def _do_combine_bg(in_dir: Union[str, bytes, PathLike], in_basename: str, out_dir: Union[str, bytes, PathLike],
+                   out_name: str, mode: str):
     in_path = Path(in_dir)
-    for suffix in ('*.fits', '*.fit'):
-        pattern = in_basename + suffix
-        if list(in_path.glob(pattern)):
-            break
-    collection = ccd.ImageFileCollection(location=in_dir, glob_include=pattern)
-    out_file = str(Path(out_dir) / out_name)
-    if not Path(out_name).suffix:
-        out_file = out_file + Path(collection.files[0]).suffix
-    ccd.combine(collection.ccds({'unit': 'adu'}), method=mode,
-                output_file=out_file, overwrite=True)
-    return f'Combined {len(collection.files)} images.'
+    input_files = []
+    for candidate in in_path.glob(in_basename + '*.*'):
+        if candidate.is_file() and candidate.suffix in ('.fits', '.fit'):
+            input_files.append(candidate)
+    input_data: Union[None, npt.NDArray[Any]] = None
+    header = None
+    data_idx = 0
+    in_type = None
+    for input_file in input_files:
+        in_hdu_l = fits.open(input_file)
+        data: npt.NDArray[Any] = in_hdu_l[0].data
+        if input_data is None:
+            header = in_hdu_l[0].header
+            num_files = len(input_files)
+            input_data = np.empty((num_files, data.shape[0], data.shape[1]), data.dtype)
+            header['HISTORY'] = f'Combined {num_files} files.'
+            in_type = data.dtype
+        input_data[data_idx, :, :] = data
+        in_hdu_l.close()
+        data_idx = data_idx + 1
+    if mode == 'median':
+        output_data = np.median(input_data, axis=0)
+    else:
+        output_data = np.mean(input_data, axis=0)
+    out_hdu = fits.PrimaryHDU(output_data.astype(in_type), header)
+    out_name_full = out_name
+    if not out_name_full.endswith('.fit') and not out_name_full.endswith('.fits'):
+        out_name_full = out_name_full + input_files[0].suffix
+    out_path = Path(out_dir) / out_name_full
+    out_hdu.writeto(out_path, overwrite=True)
+    return f'Combined {len(input_files)} images.'
 
 
 class Combine(tk.Toplevel):
@@ -132,12 +157,13 @@ class Combine(tk.Toplevel):
 
         run_bg = partial(_do_combine_bg, in_dir, in_basename, out_dir, out_name, mode)
         self._queue = queue.Queue()
-        self._bg_exec= bgexec.BgExec(run_bg, self._queue)
+        self._bg_exec = bgexec.BgExec(run_bg, self._queue)
         self._bg_exec.start()
         self._check_progress()
 
     def _on_success(self, result: str):
-        mb.showinfo(master=self, message=result)
+        self.wm_withdraw()
+        mb.showinfo(master=self._master, message=result)
         self.destroy()
 
     def _on_error(self, error_msg: str):
@@ -154,4 +180,3 @@ class Combine(tk.Toplevel):
                 self._on_success(str(evt.client_data))
             else:
                 self._on_error(str(evt.client_data))
-
