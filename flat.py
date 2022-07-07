@@ -145,7 +145,7 @@ class Flat(tk.Toplevel):
                     out_data = out_data / self._flat
                     in_hdu_l.close()
                     out_hdu = fits.PrimaryHDU(out_data, header)
-                    out_hdu.writeto(output_path / (prefix + candidate.name))
+                    out_hdu.writeto(output_path / (prefix + candidate.name), overwrite=True)
                     break
 
 

@@ -1,8 +1,9 @@
 from astropy.io import fits
+import numpy as np
 import numpy.typing as npt
 from os import PathLike
 from pathlib import Path
-from typing import Any, Union, Callable
+from typing import Any, Union, Callable, Iterable
 
 
 class Dark:
@@ -23,7 +24,8 @@ class Dark:
                 self._darks_by_exposure[exptime] = dark
                 hdu_l.close()
 
-    def correct(self, input_dir: Union[str, bytes, PathLike], output_dir: Union[str, bytes, PathLike, None] = None,
+    def correct(self, input_dir: Union[str, bytes, PathLike], input_basenames: Iterable[str],
+                output_dir: Union[str, bytes, PathLike, None] = None,
                 prefix: Union[str, None] = None, callback: Union[Callable[[str], None], None] = None):
         input_path = Path(input_dir)
         if output_dir is None:
@@ -40,10 +42,15 @@ class Dark:
         else:
             pref = prefix
 
-        for in_file in sorted(input_path.iterdir()):
-            if not in_file.is_file() or in_file.suffix not in ('.fits', '.fit'):
+        for candidate in sorted(input_path.iterdir()):
+            if not candidate.is_file() or candidate.suffix not in ('.fits', '.fit'):
                 continue
-            if in_file in exclusions:
+            in_file = None
+            for basename in input_basenames:
+                if candidate.name.startswith(basename):
+                    in_file = candidate
+                    break
+            if in_file is None:
                 continue
             if callback is not None:
                 in_name = in_file.name
@@ -69,7 +76,7 @@ class Dark:
         dark = self._darks_by_exposure[exp_time]
         dark_hdu_l = fits.open(dark)
         dark_data = dark_hdu_l[0].data
-        result = in_data - dark_data
+        result = in_data.astype(np.int32) - dark_data
         dark_hdu_l.close()
         return result
 
@@ -82,7 +89,7 @@ class Dark:
         dark_header = dark_hdu_l[0].header
         scale = exp_time / float(dark_header['EXPTIME'])
         dark_data = dark_data * scale
-        result = in_data - dark_data - bias_data
+        result = in_data.astype(np.int32) - dark_data - bias_data
         dark_hdu_l.close()
         bias_hdu_l.close()
         return result

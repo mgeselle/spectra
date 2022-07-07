@@ -30,7 +30,10 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
     if not progress.is_cancelled():
         dark_prefix = 'drk-'
         dark = Dark(master_dir, bias_basename, dark_basename)
-        dark.correct(input_dir, output_dir, dark_prefix, callback)
+        input_names = [calibration, program]
+        if flat_basename is not None:
+            input_names.append(flat_basename)
+        dark.correct(input_dir, input_names, output_dir, dark_prefix, callback)
         cumul_pfx = dark_prefix
 
     if not progress.is_cancelled():
