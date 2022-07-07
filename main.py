@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog as fd
 from combine import Combine
+from config import CamCfgGUI
 from crop import Crop
 from fitsfile import FitsImageFile
 from image_display import ImageDisplay
@@ -50,6 +51,12 @@ class Main(ttk.Frame):
                                  command=lambda: Reduce(self.winfo_toplevel()))
 
         menubar.add_cascade(label='Image Ops', underline=0, menu=img_ops_menu)
+
+        cfg_menu = tk.Menu(menubar, tearoff=False)
+        cfg_menu.add_command(label='Camera', underline=0,
+                             command=lambda: CamCfgGUI(self.winfo_toplevel()))
+
+        menubar.add_cascade(label='Configuration', underline=0, menu=cfg_menu)
 
     def __open(self):
         file_types = (('FITS', '*.fit *.fits'), ('all', '*'))
