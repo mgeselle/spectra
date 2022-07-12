@@ -1,3 +1,4 @@
+from astropy.io import fits
 import os
 from pathlib import Path
 import tkinter as tk
@@ -9,6 +10,7 @@ from crop import Crop
 from fitsfile import FitsImageFile
 from image_display import ImageDisplay
 from reduce import Reduce
+from specview import Specview
 import spectra
 
 
@@ -29,8 +31,6 @@ class Main(ttk.Frame):
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        self._image_display = ImageDisplay(self)
-        self._image_display.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
         menubar = tk.Menu(root)
         root.config(menu=menubar)
@@ -58,6 +58,15 @@ class Main(ttk.Frame):
 
         menubar.add_cascade(label='Configuration', underline=0, menu=cfg_menu)
 
+        self._image_display = ImageDisplay(self)
+        self._image_display.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+
+        root.update_idletasks()
+        self._image_display.grid_remove()
+        self._specview = Specview(self, width=self.winfo_width(), height=self.winfo_height())
+        self._specview.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+        self._specview_visible = True
+
     def __open(self):
         file_types = (('FITS', '*.fit *.fits'), ('all', '*'))
         file_name = fd.askopenfilename(title='Open FITS file', filetypes=file_types,
@@ -65,8 +74,25 @@ class Main(ttk.Frame):
         if not file_name:
             return
         spectra.current_dir = Path(file_name).parent
-        fits_image = FitsImageFile(file_name)
-        self._image_display.set_image(fits_image)
+        hdu_l = fits.open(file_name)
+        header = hdu_l[0].header
+        data = hdu_l[0].data
+        hdu_l.close()
+        if header['NAXIS'] == 1:
+            if not self._specview_visible:
+                self._image_display.grid_forget()
+                self._specview.grid()
+                self._specview_visible = True
+            self._specview.clear()
+            self._specview.add_spectrum(data)
+        elif header['NAXIS'] == 2:
+            data = None
+            if self._specview_visible:
+                self._specview.grid_forget()
+                self._specview_visible = False
+                self._image_display.grid()
+            fits_image = FitsImageFile(file_name)
+            self._image_display.set_image(fits_image)
 
     def __combine(self):
         Combine(self.winfo_toplevel())

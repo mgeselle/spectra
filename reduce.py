@@ -7,7 +7,10 @@ import tkinter.ttk as ttk
 import tkutil
 from typing import Union
 import bgexec
+from config import config
 from dark import Dark
+from extract import optimal as ex_optimal
+from extract import simple as ex_simple
 from flat import Flat
 from progress import Progress
 from rotate import Rotate
@@ -16,7 +19,7 @@ from slant import Slant
 
 def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str, None],
             bias_basename: str, dark_basename: str, flat_basename: str,
-            calibration: str, program: str,
+            calibration: str, program: str, cfg_name: str,
             status_queue: Queue, progress: Progress):
 
     event = bgexec.Event(bgexec.INFO, 'Applying dark correction.')
@@ -59,6 +62,14 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
         input_names = [cumul_pfx + calibration, cumul_pfx + program]
         slant_prefix = 'slt-'
         slt.apply(input_names, prefix=slant_prefix)
+        cumul_pfx = slant_prefix + cumul_pfx
+
+    if not progress.is_cancelled():
+        def fwd_event(msg: str) -> None:
+            evt = bgexec.Event(bgexec.INFO, msg)
+            status_queue.put(evt)
+        d_low, d_high = ex_optimal(output_dir, cumul_pfx + program, cfg_name, output_dir, 'p1d-', fwd_event)
+        ex_simple(input_dir, cumul_pfx + calibration, (d_low, d_high), output_dir, 'c1d-')
 
     event = bgexec.Event(bgexec.FINISHED, 'Data reduction complete.')
     status_queue.put(event)
@@ -168,6 +179,15 @@ class Reduce(tk.Toplevel):
         pgm_entry.grid(row=7, column=1, padx=(x_pad, x_pad),
                        pady=(y_pad, 0), sticky=tk.W)
 
+        cam_cfg_label = ttk.Label(top, text='Camera Configuration:')
+        cam_cfg_label.grid(row=8, column=0, padx=(x_pad, x_pad),
+                           pady=(y_pad,0), sticky=tk.W)
+        self._cam_cfg_name = tk.StringVar(top)
+        cam_cfg_combo = ttk.Combobox(top, width=30, state='readonly',
+                                     textvariable=self._cam_cfg_name, values=config.get_camera_configs())
+        cam_cfg_combo.grid(row=8, column=1, padx=(x_pad, x_pad),
+                           pady=(y_pad, 0), sticky=tk.W)
+
         bottom = ttk.Frame(self, relief=tk.RAISED)
         bottom.pack(side=tk.TOP, fill=tk.BOTH, ipadx=x_pad, ipady=y_pad)
         ok_button = ttk.Button(bottom, text='OK', command=self._do_reduce)
@@ -249,6 +269,7 @@ class Reduce(tk.Toplevel):
             _reduce(input_dir=input_dir, master_dir=master_dir, output_dir=output_dir,
                     bias_basename=bias_name, dark_basename=dark_name,
                     flat_basename=flat_name, calibration=calib_name, program=pgm_basename,
+                    cfg_name=self._cam_cfg_name.get(),
                     status_queue=status_queue, progress=progress)
 
         bg_exec = bgexec.BgExec(run_reduce, status_queue)

@@ -1,5 +1,5 @@
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.backend_bases import MouseEvent, PickEvent
+from matplotlib.backend_bases import MouseEvent
 from matplotlib.figure import Figure
 import numpy as np
 import numpy.typing as npt
@@ -11,8 +11,16 @@ from typing import Union, Any, Callable, SupportsFloat, SupportsInt
 class Specview(ttk.Frame):
     def __init__(self, master: Union[tk.Widget, ttk.Widget, tk.Tk, tk.Toplevel], **kwargs):
         super().__init__(master, **kwargs)
+        if 'width' in kwargs:
+            width = kwargs['width']
+        else:
+            width = 1024
+        if 'height' in kwargs:
+            height = kwargs['height']
+        else:
+            height = 768
         dpi = master.winfo_toplevel().winfo_fpixels('1i')
-        self._fig = Figure(figsize=(5, 4), dpi=dpi)
+        self._fig = Figure(figsize=(width / dpi, height / dpi), dpi=dpi)
         self._axes = self._fig.add_subplot()
         self._axes.set_xlabel('Pixels')
         self._axes.set_ylabel('Flux [ADU]')
@@ -38,10 +46,16 @@ class Specview(ttk.Frame):
                                           lambda_ref + (data.shape[0] - 1) * lambda_step,
                                           data.shape[0] - 1)
         line_id = f'line{self._line_id:<d}'
-        self._lines[line_id], = self._axes.plot(self._xdata, data, fmt)
+        self._lines[line_id] = self._axes.plot(self._xdata, data, fmt).pop()
         self._canvas.draw()
 
         return line_id
+
+    def clear(self):
+        for item in self._lines.items():
+            item[1].remove()
+        self._lines.clear()
+        self._canvas.draw()
 
     def set_spectrum_data(self, spec_id: str, data: npt.NDArray[Any]):
         if spec_id not in self._lines:
