@@ -2,14 +2,14 @@ from astropy.io import fits
 import queue
 from pathlib import Path
 from queue import Queue
-import tkinter as tk
-import tkinter.messagebox as mb
-import tkinter.ttk as ttk
 from typing import Tuple
+import wx
+import wx.lib.intctrl as wxli
 from bgexec import BgExec, Event
 import bgexec
 from progress import Progress
 import tkutil
+import wxutil
 
 
 def _is_int(action, key_val):
@@ -19,101 +19,74 @@ def _is_int(action, key_val):
         return key_val.isdigit()
 
 
-def _do_crop(in_dir: Path, out_dir: Path,
-             x: Tuple[int, int], y: Tuple[int, int],
-             status_queue: Queue, progress: Progress) -> None:
-    n_processed = 0
-    for in_file in sorted(in_dir.iterdir()):
-        if not in_file.is_file() or not (in_file.suffix in ('.fits', '.fit')):
-            continue
-        if progress.is_cancelled():
-            return
-        msg = f'Processing {in_file}'
-        evt = Event(bgexec.INFO, msg)
-        status_queue.put(evt)
-        full_out_file = out_dir / in_file.name
-        hdu_l = fits.open(in_file)
-        header = hdu_l[0].header
-        data = hdu_l[0].data
-        new_data = data[y[0]:y[1], x[0]:x[1]]
-        new_hdu = fits.PrimaryHDU(new_data, header)
-        new_hdu.writeto(full_out_file, overwrite=True)
-        hdu_l.close()
-        n_processed = n_processed + 1
 
-    evt = Event(bgexec.FINISHED, f'Processed {n_processed:<d} file(s).')
-    status_queue.put(evt)
+class Crop(wx.Dialog):
+    def __init__(self, parent: wx.Window, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.SetTitle('Crop Images')
 
+        panel = wx.Panel(self)
 
-class Crop(tk.Toplevel):
-    def __init__(self, parent: (tk.Tk, tk.Toplevel)):
-        super().__init__(parent)
-        self.title('Crop Images')
-        self._master = parent
+        text_chars = 40
+        in_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Input Directory:')
+        self._in_dir_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._in_dir_text, text_chars)
+        folder_bmp = wx.ArtProvider.GetBitmap(wx.ART_FOLDER_OPEN, wx.ART_BUTTON)
+        self._in_dir_btn_id = wx.NewIdRef()
+        in_dir_btn = wx.BitmapButton(panel, id=self._in_dir_btn_id.GetId(), bitmap=folder_bmp)
+        in_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        in_dir_sizer.Add(self._in_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        in_dir_sizer.Add(in_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        x_pad = 20
-        y_pad = 20
-        top = ttk.Frame(self, relief=tk.RAISED)
-        top.pack(side=tk.TOP, fill=tk.X, ipadx=x_pad, ipady=y_pad)
+        out_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Output Directory:')
+        self._out_dir_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._out_dir_text, text_chars)
+        self._out_dir_btn_id = wx.NewIdRef()
+        out_dir_btn = wx.BitmapButton(panel, id=self._out_dir_btn_id.GetId(), bitmap=folder_bmp)
+        out_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        out_dir_sizer.Add(self._out_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        out_dir_sizer.Add(out_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        in_dir_label = ttk.Label(top, text='Input Directory:')
-        in_dir_label.grid(row=0, column=0, padx=(x_pad, 0), pady=(2 * y_pad, 0), sticky=tk.W)
-        self._in_dir = tk.StringVar(top, '')
-        in_dir_entry = ttk.Entry(top, width=40, textvariable=self._in_dir, takefocus=True)
-        in_dir_entry.grid(row=0, column=1, padx=(x_pad, x_pad), pady=(2 * y_pad, 0), sticky=tk.W)
-        self._folder_icon = tkutil.load_icon(top, 'folder')
-        in_dir_btn = ttk.Button(top, image=self._folder_icon, command=self._select_in_dir)
-        in_dir_btn.grid(row=0, column=2, padx=(0, 0), pady=(2 * y_pad, 0), sticky=tk.W)
+        c1_label = wx.StaticText(panel, wx.ID_ANY, 'x1, y1')
+        self._cx1_text = wxli.IntCtrl(panel, min=0)
+        wxutil.size_text_by_chars(self._cx1_text, 5)
+        self._cy1_text = wxli.IntCtrl(panel, min=0)
+        wxutil.size_text_by_chars(self._cy1_text, 5)
+        c1_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        c1_sizer.Add(self._cx1_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        c1_sizer.AddSpacer(10)
+        c1_sizer.Add(self._cy1_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        out_dir_label = ttk.Label(top, text='Output Directory:')
-        out_dir_label.grid(row=1, column=0, padx=(x_pad, 0), pady=(y_pad, 0), sticky=tk.W)
-        self._out_dir = tk.StringVar(top, '')
-        out_dir_entry = ttk.Entry(top, width=40, textvariable=self._out_dir,
-                                  takefocus=True)
-        out_dir_entry.grid(row=1, column=1, padx=(x_pad, x_pad), pady=(y_pad, 0), sticky=tk.W)
-        out_dir_btn = ttk.Button(top, image=self._folder_icon, command=self._select_out_dir)
-        out_dir_btn.grid(row=1, column=2, padx=(0, 0), pady=(y_pad, 0), sticky=tk.W)
+        c2_label = wx.StaticText(panel, wx.ID_ANY, 'x1, y1')
+        self._cx2_text = wxli.IntCtrl(panel, min=0)
+        wxutil.size_text_by_chars(self._cx2_text, 5)
+        self._cy2_text = wxli.IntCtrl(panel, min=0)
+        wxutil.size_text_by_chars(self._cy2_text, 5)
+        c2_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        c2_sizer.Add(self._cx2_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        c2_sizer.AddSpacer(10)
+        c2_sizer.Add(self._cy2_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        c_frame = ttk.Frame(top)
-        c_frame.grid(row=2, column=0, columnspan=3, sticky=tk.N+tk.E+tk.W, pady=(y_pad, 0))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        grid = wx.FlexGridSizer(rows=4, cols=2, hgap=5, vgap=5)
+        grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(in_dir_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(out_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(out_dir_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(c1_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(c1_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(c2_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(c2_sizer, 1, wx.ALIGN_LEFT)
 
-        c1_label = ttk.Label(c_frame, text='x1, y1')
-        c1_label.grid(row=0, column=0, padx=(x_pad, 0), pady=(0, y_pad))
-        self._x1 = tk.IntVar()
-        c_validate = (self.register(_is_int), '%d', '%P')
-        cx1_entry = ttk.Entry(c_frame, width=6, justify=tk.RIGHT,
-                              textvariable=self._x1, validate='key', validatecommand=c_validate)
-        cx1_entry.grid(row=0, column=1, padx=(x_pad, 0), pady=(0, y_pad),
-                       sticky=tk.W)
-        self._y1 = tk.IntVar()
-        cy1_entry = ttk.Entry(c_frame, width=6, justify=tk.RIGHT,
-                              textvariable=self._y1, validate='key', validatecommand=c_validate)
-        cy1_entry.grid(row=0, column=2, padx=(x_pad, 0), pady=(0, y_pad),
-                       sticky=tk.W)
+        btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
 
-        c2_label = ttk.Label(c_frame, text='x2, y2')
-        c2_label.grid(row=1, column=0, padx=(x_pad, 0))
-        self._x2 = tk.IntVar()
-        cx2_entry = ttk.Entry(c_frame, width=6, justify=tk.RIGHT,
-                              textvariable=self._x2, validate='key', validatecommand=c_validate)
-        cx2_entry.grid(row=1, column=1, padx=(x_pad, 0),
-                       sticky=tk.W)
-        self._y2 = tk.IntVar()
-        cy2_entry = ttk.Entry(c_frame, width=6, justify=tk.RIGHT,
-                              textvariable=self._y2, validate='key', validatecommand=c_validate)
-        cy2_entry.grid(row=1, column=2, padx=(x_pad, 0),
-                       sticky=tk.W)
+        vbox.Add(grid, 0, wx.ALL, border=10)
+        vbox.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
 
-        bottom = ttk.Frame(self, relief=tk.RAISED)
-        bottom.pack(fill=tk.BOTH, side=tk.TOP, ipadx=20, ipady=20)
-        ok_button = ttk.Button(bottom, text='OK', command=self._crop)
-        ok_button.pack(side=tk.LEFT, expand=True)
-        cancel_button = ttk.Button(bottom, text='Cancel', command=self.destroy)
-        cancel_button.pack(side=tk.LEFT, expand=True)
-
-        tkutil.center_on_parent(parent, self)
-
-        in_dir_entry.focus_set()
+        panel.SetSizer(vbox)
+        panel.Fit()
+        sz = panel.GetBestSize()
+        self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
     def _select_in_dir(self):
         new_in_dir = tkutil.select_dir(self, True)
@@ -146,8 +119,8 @@ class Crop(tk.Toplevel):
         try:
             out_path.mkdir(parents=True, exist_ok=True)
         except PermissionError as err:
-            mb.showerror(master=self._master,
-                         message=f'Cannot create output directory: {err}')
+            # mb.showerror(master=self._master,
+            #              message=f'Cannot create output directory: {err}')
             self.deiconify()
             return
 
@@ -156,30 +129,84 @@ class Crop(tk.Toplevel):
         x_tup = sorted((x1, x2))
         y_tup = tuple(sorted((y1, y2)))
 
-        def do_crop():
-            _do_crop(in_path, out_path,
-                     (x_tup[0], x_tup[1]), (y_tup[0], y_tup[1]),
-                     status_queue, progress)
-
-        bg_exec = BgExec(do_crop, status_queue)
+        # def do_crop():
+        #     _do_crop(in_path, out_path,
+        #              (x_tup[0], x_tup[1]), (y_tup[0], y_tup[1]),
+        #              status_queue, progress)
+        #
+        # bg_exec = BgExec(do_crop, status_queue)
         progress.start()
-        bg_exec.start()
-        self._check_progress(bg_exec, status_queue, progress)
+        # bg_exec.start()
+        # self._check_progress(bg_exec, status_queue, progress)
 
     def _check_progress(self, bg_exec: BgExec, status_queue: Queue, progress: Progress):
         while not status_queue.empty():
             event = status_queue.get()
-            if event.evt_type == bgexec.ERROR:
-                progress.withdraw()
-                mb.showerror(master=self._master, message=event.client_data)
-                self.destroy()
-                return
-            elif event.evt_type == bgexec.FINISHED:
-                progress.withdraw()
-                mb.showinfo(master=self._master, message=event.client_data)
-                self.destroy()
-                return
+            # if event.evt_type == bgexec.ERROR:
+            #     progress.withdraw()
+            #     mb.showerror(master=self._master, message=event.client_data)
+            #     self.destroy()
+            #     return
+            # elif event.evt_type == bgexec.FINISHED:
+            #     progress.withdraw()
+            #     mb.showinfo(master=self._master, message=event.client_data)
+            #     self.destroy()
+            #     return
             progress.message(str(event.client_data))
         if bg_exec.is_alive():
             def do_check(): self._check_progress(bg_exec, status_queue, progress)
             self._master.after(100, do_check)
+
+    def _do_crop(self, in_dir: Path, out_dir: Path,
+                 x: Tuple[int, int], y: Tuple[int, int],
+                 status_queue: Queue, progress: Progress) -> None:
+        files = []
+        for in_file in sorted(in_dir.iterdir()):
+            if not in_file.is_file() or not (in_file.suffix in ('.fits', '.fit')):
+                continue
+            files.append(in_file)
+
+        n_processed = 0
+        n_files = len(files)
+        for in_file in files:
+            if progress.WasCancelled():
+                break
+            msg = f'Processing file {n_processed + 1} of {n_files}'
+            progress.message(n_processed, msg)
+            full_out_file = out_dir / in_file.name
+            hdu_l = fits.open(in_file)
+            header = hdu_l[0].header
+            data = hdu_l[0].data
+            new_data = data[y[0]:y[1], x[0]:x[1]]
+            new_hdu = fits.PrimaryHDU(new_data, header)
+            new_hdu.writeto(full_out_file, overwrite=True)
+            hdu_l.close()
+            n_processed = n_processed + 1
+
+
+
+        evt = Event(bgexec.FINISHED, f'Processed {n_processed:<d} file(s).')
+        status_queue.put(evt)
+
+
+if __name__ == '__main__':
+    app = wx.App()
+    frame = wx.Frame(None, title='Crop Test')
+    pnl = wx.Panel(frame)
+    id_ref = wx.NewIdRef()
+    button = wx.Button(pnl, id=id_ref.GetId(), label='Run')
+    sizer = wx.BoxSizer(wx.VERTICAL)
+    sizer.Add(button)
+    pnl.SetSizer(sizer)
+    pnl.Fit()
+
+    def _on_btn(event):
+        try:
+            dlg = Crop(frame)
+            dlg.ShowModal()
+        finally:
+            dlg.Destroy()
+
+    frame.Bind(wx.EVT_BUTTON, _on_btn, id=id_ref.GetId())
+    frame.Show()
+    app.MainLoop()

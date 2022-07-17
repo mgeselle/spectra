@@ -47,6 +47,7 @@ class Specview(ttk.Frame):
                                           data.shape[0] - 1)
         line_id = f'line{self._line_id:<d}'
         self._lines[line_id] = self._axes.plot(self._xdata, data, fmt).pop()
+        self._axes.relim()
         self._canvas.draw()
 
         return line_id

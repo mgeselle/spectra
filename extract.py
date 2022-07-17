@@ -6,8 +6,9 @@ import numpy.typing as npt
 from os import PathLike
 from pathlib import Path
 from time import time
-from typing import Union, Tuple, Sequence, Any, Callable, MutableSequence
+from typing import Union, Tuple, Sequence, Any, Callable
 from config import config, CameraConfig
+from util import find_input_files
 
 import tkinter as tk
 from specview import Specview
@@ -16,7 +17,7 @@ from specview import Specview
 def simple(input_dir: Union[str, bytes, PathLike], input_basename: str,
            limits: Union[Tuple[int, int],  Sequence[int]],
            output_dir: Union[None, str, bytes, PathLike] = None, prefix=''):
-    input_files = _find_input_files(input_dir, input_basename)
+    input_files = find_input_files(input_dir, input_basename)
     headers = []
     out_data = None
     for i in range(len(input_files)):
@@ -48,7 +49,7 @@ def simple(input_dir: Union[str, bytes, PathLike], input_basename: str,
 def optimal(input_dir: Union[str, bytes, PathLike], input_basename: str,
             config_name: str, output_dir: Union[None, str, bytes, PathLike] = None, prefix='',
             callback: Union[None, Callable[[str], None]] = None) -> Tuple[int, int]:
-    input_files = _find_input_files(input_dir, input_basename)
+    input_files = find_input_files(input_dir, input_basename)
     cam_cfg = config.get_camera_config(config_name)
     headers = []
     out_data = None
@@ -109,20 +110,6 @@ def _optimal(data: npt.NDArray[Any], cam_cfg: CameraConfig,
         callback(msg)
     net_img = data - sky_img
     return _extract_spectrum(net_img, sky_img, var_img, d_low, d_high, cam_cfg, callback), d_low, d_high
-
-
-def _find_input_files(input_dir: Union[str, bytes, PathLike], input_basename) -> MutableSequence[Path]:
-    input_path = Path(input_dir)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input directory {input_dir} doesn't exist")
-    input_files = []
-    if input_basename.endswith('.fits') or input_basename.endswith('.fit'):
-        input_files.append(input_path / input_basename)
-    else:
-        for candidate in input_path.glob(input_basename + '*.*'):
-            if candidate.is_file() and candidate.suffix in ('.fits', '.fit'):
-                input_files.append(candidate)
-    return input_files
 
 
 def _find_sky_and_signal(data: npt.NDArray[Any]) -> Tuple[int, int, int, int]:

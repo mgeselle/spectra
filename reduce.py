@@ -34,7 +34,7 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
         dark_prefix = 'drk-'
         dark = Dark(master_dir, bias_basename, dark_basename)
         input_names = [calibration, program]
-        if flat_basename is not None:
+        if flat_basename is not None and flat_basename.strip() != '':
             input_names.append(flat_basename)
         dark.correct(input_dir, input_names, output_dir, dark_prefix, callback)
         cumul_pfx = dark_prefix
@@ -49,7 +49,7 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
         rot.rotate(output_dir, input_names, output_dir, rot_prefix)
         cumul_pfx = rot_prefix + cumul_pfx
 
-    if not progress.is_cancelled() and flat_basename is not None:
+    if not progress.is_cancelled() and flat_basename is not None and flat_basename.strip() != '':
         flt = Flat(progress, output_dir, cumul_pfx + flat_basename)
         input_names = [cumul_pfx + calibration, cumul_pfx + program]
         flat_prefix = 'flt-'
@@ -65,11 +65,8 @@ def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str,
         cumul_pfx = slant_prefix + cumul_pfx
 
     if not progress.is_cancelled():
-        def fwd_event(msg: str) -> None:
-            evt = bgexec.Event(bgexec.INFO, msg)
-            status_queue.put(evt)
-        d_low, d_high = ex_optimal(output_dir, cumul_pfx + program, cfg_name, output_dir, 'p1d-', fwd_event)
-        ex_simple(input_dir, cumul_pfx + calibration, (d_low, d_high), output_dir, 'c1d-')
+        d_low, d_high = ex_optimal(output_dir, cumul_pfx + program, cfg_name, output_dir, 'p1d-', callback)
+        ex_simple(output_dir, cumul_pfx + calibration, (d_low, d_high), output_dir, 'c1d-')
 
     event = bgexec.Event(bgexec.FINISHED, 'Data reduction complete.')
     status_queue.put(event)
@@ -181,7 +178,7 @@ class Reduce(tk.Toplevel):
 
         cam_cfg_label = ttk.Label(top, text='Camera Configuration:')
         cam_cfg_label.grid(row=8, column=0, padx=(x_pad, x_pad),
-                           pady=(y_pad,0), sticky=tk.W)
+                           pady=(y_pad, 0), sticky=tk.W)
         self._cam_cfg_name = tk.StringVar(top)
         cam_cfg_combo = ttk.Combobox(top, width=30, state='readonly',
                                      textvariable=self._cam_cfg_name, values=config.get_camera_configs())
