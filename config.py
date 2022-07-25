@@ -1,7 +1,8 @@
 from astropy.table import Table
-from configparser import ConfigParser
 from dataclasses import dataclass
+from os import PathLike
 from pathlib import Path
+from threading import Lock
 from typing import List, Union, Sequence
 import wx
 
@@ -15,63 +16,130 @@ class CameraConfig:
     gain: float
 
 
-# TODO Use wx.ConfigBase for storing settings.
-# TODO Use wx.StandardPaths to determine where to store downloaded files.
 class Config:
+    _class_lock = Lock()
+    _config = None
+
     def __init__(self):
-        self._ini_file = Path.home() / '.spectra' / 'spectra.ini'
-        self._config = ConfigParser()
-        if self._ini_file.exists():
-            self._config.read(self._ini_file)
+        self._lock = Lock()
+        self._config: wx.ConfigBase = wx.ConfigBase.Get()
 
     def get_camera_configs(self) -> List[str]:
-        return [x[4:] for x in self._config.sections() if x.startswith('CAM:')]
+        result = []
+        try:
+            self._lock.acquire()
+            old_path = self._cd_cam_cfg_path()
+            more, value, index = self._config.GetFirstGroup()
+            if more and value != '':
+                result.append(value)
+            while more:
+                more, value, index = self._config.GetNextGroup(index)
+                if value != '':
+                    result.append(value)
+            self._config.SetPath(old_path)
+            return result
+        finally:
+            if self._lock.locked():
+                self._lock.release()
 
     def get_camera_config(self, name: str) -> Union[None, CameraConfig]:
-        section = 'CAM:' + name
-        if not self._config.has_section(section):
-            return None
-        ron = self._config.getfloat(section, 'ron')
-        gain = self._config.getfloat(section, 'gain')
-        return CameraConfig(ron, gain)
+        try:
+            self._lock.acquire()
+            old_path = self._cd_cam_cfg_path()
+            result = None
+            if self._config.HasGroup(name):
+                self._config.SetPath(name)
+                ron = self._config.ReadFloat('ron')
+                gain = self._config.ReadFloat('gain')
+                result = CameraConfig(ron, gain)
+            self._config.SetPath(old_path)
+            return result
+        finally:
+            if self._lock.locked():
+                self._lock.release()
 
     def save_camera_config(self, name: str, cfg: CameraConfig):
-        section = 'CAM:' + name
-        if not self._config.has_section(section):
-            self._config[section] = {}
-        self._config[section]['ron'] = str(cfg.ron)
-        self._config[section]['gain'] = str(cfg.gain)
-        if not self._ini_file.parent.exists():
-            self._ini_file.parent.mkdir(parents=True)
-        with self._ini_file.open('w') as fp:
-            self._config.write(fp)
+        try:
+            self._lock.acquire()
+            old_path = self._cd_cam_cfg_path()
+            self._config.SetPath(name)
+            self._config.WriteFloat('ron', cfg.ron)
+            self._config.WriteFloat('gain', cfg.gain)
+            self._config.SetPath(old_path)
+            self._config.Flush()
+        finally:
+            if self._lock.locked():
+                self._lock.release()
 
     def delete_camera_config(self, name: str):
-        section = 'CAM:' + name
-        self._config.pop(section)
-        with self._ini_file.open('w') as fp:
-            self._config.write(fp)
+        try:
+            self._lock.acquire()
+            old_path = self._cd_cam_cfg_path()
+            if self._config.HasGroup(name):
+                self._config.DeleteGroup(name)
+            self._config.SetPath(old_path)
+            self._config.Flush()
+        finally:
+            if self._lock.locked():
+                self._lock.release()
 
-    def get_calib_line_names(self) -> Sequence[str]:
-        cfg_dir = self._ini_file.parent
+    def _cd_cam_cfg_path(self) -> str:
+        old_path = self._config.GetPath()
+        self._config.SetPath('/Camera')
+        return old_path
+
+    def get_last_directory(self) -> Path:
+        try:
+            self._lock.acquire()
+            return Path(self._config.Read('/Global/LastDir', str(Path.home())))
+        finally:
+            if self._lock.locked():
+                self._lock.release()
+
+    def set_last_directory(self, last_dir: Union[str, bytes, PathLike]):
+        try:
+            self._lock.acquire()
+            self._config.Write('/Global/LastDir', str(last_dir))
+        finally:
+            if self._lock.locked():
+                self._lock.release()
+
+    @staticmethod
+    def get():
+        try:
+            Config._class_lock.acquire()
+            if Config._config is None:
+                Config._config = Config()
+        finally:
+            if Config._class_lock.locked():
+                Config._class_lock.release()
+        return Config._config
+
+    @staticmethod
+    def get_calib_line_names() -> Sequence[str]:
+        cfg_dir = Config._get_calib_dir()
         if not cfg_dir.exists():
             return ()
         return [x.stem.replace('_', ' ') for x in cfg_dir.glob('*.fits')]
 
-    def get_calib_table(self, name: str) -> Union[None, Table]:
-        file = self._ini_file.parent / (name.replace(' ', '_') + '.fits')
+    @staticmethod
+    def get_calib_table(name: str) -> Union[None, Table]:
+        file = Config._get_calib_dir() / (name.replace(' ', '_') + '.fits')
         if file.exists():
             return Table.read(file)
         return None
 
-    def save_calib_table(self, name: str, table: Table):
-        ini_dir = self._ini_file.parent
+    @staticmethod
+    def save_calib_table(name: str, table: Table):
+        ini_dir = Config._get_calib_dir()
         ini_dir.mkdir(parents=True, exist_ok=True)
         file = ini_dir / (name.replace(' ', '_') + '.fits')
         table.write(file)
 
-
-config = Config()
+    @staticmethod
+    def _get_calib_dir():
+        user_config_dir = wx.StandardPaths.Get().GetUserDataDir()
+        return Path(user_config_dir) / 'calib'
 
 
 class CamCfgGUI(wx.Dialog):
@@ -81,7 +149,7 @@ class CamCfgGUI(wx.Dialog):
 
         panel = wx.Panel(self)
         cam_label = wx.StaticText(panel, wx.ID_ANY, 'Name:')
-        self._cam_combo = wx.ComboBox(panel, wx.ID_ANY, choices=config.get_camera_configs(),
+        self._cam_combo = wx.ComboBox(panel, wx.ID_ANY, choices=Config.get().get_camera_configs(),
                                       style=wx.CB_DROPDOWN | wx.CB_SORT)
         wxutil.size_text_by_chars(self._cam_combo, 30)
 
@@ -114,7 +182,7 @@ class CamCfgGUI(wx.Dialog):
         btn_sizer.Add(self._cancel_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         btn_sizer.AddStretchSpacer()
         # Need to keep a reference to the sizer, because
-        # btn_sizer_s doesn't. This will yield a segfault.
+        # btn_sizer_s doesn't. This would yield a segfault otherwise.
         self._btn_sizer = btn_sizer
 
         btn_sizer_s = self.CreateSeparatedSizer(btn_sizer)
@@ -136,7 +204,7 @@ class CamCfgGUI(wx.Dialog):
     # noinspection PyUnusedLocal
     def _combo_evt(self, event: wx.Event):
         entry = self._cam_combo.GetValue()
-        cam_cfg = config.get_camera_config(entry)
+        cam_cfg = Config.get().get_camera_config(entry)
         self._gain_entry.SetValue(str(cam_cfg.gain))
         self._ron_entry.SetValue(str(cam_cfg.ron))
 
@@ -149,14 +217,14 @@ class CamCfgGUI(wx.Dialog):
         ron_str = self._ron_entry.GetValue()
         gain_str = self._gain_entry.GetValue()
         cfg = CameraConfig(float(ron_str), float(gain_str))
-        config.save_camera_config(entry, cfg)
+        Config.get().save_camera_config(entry, cfg)
         self.EndModal(event.GetId())
 
     def _delete(self, event: wx.CommandEvent):
         entry = self._cam_combo.GetValue()
         if entry == '':
             return
-        config.delete_camera_config(entry)
+        Config.get().delete_camera_config(entry)
         self.EndModal(event.GetId())
 
     def _cancel(self, event: wx.CommandEvent):
@@ -165,6 +233,9 @@ class CamCfgGUI(wx.Dialog):
 
 if __name__ == '__main__':
     app = wx.App()
+    app.SetAppName('spectra')
+    user_cfg = wx.StandardPaths.Get().GetUserConfigDir()
+    print(f'Config @ {user_cfg}')
     frame = wx.Frame(None, title='Camera Config Test')
     pnl = wx.Panel(frame)
     id_ref = wx.NewIdRef()

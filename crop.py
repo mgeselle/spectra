@@ -1,23 +1,17 @@
 from astropy.io import fits
-import queue
 from pathlib import Path
-from queue import Queue
-from typing import Tuple
+import threading
+from typing import Sequence, Tuple
 import wx
 import wx.lib.intctrl as wxli
-from bgexec import BgExec, Event
-import bgexec
+import wx.lib.newevent as ne
+
 from progress import Progress
-import tkutil
+import util
 import wxutil
 
 
-def _is_int(action, key_val):
-    if action == '0':
-        return True
-    else:
-        return key_val.isdigit()
-
+CompletionEvent, EVT_ID_COMPLETION = ne.NewEvent()
 
 
 class Crop(wx.Dialog):
@@ -57,7 +51,7 @@ class Crop(wx.Dialog):
         c1_sizer.AddSpacer(10)
         c1_sizer.Add(self._cy1_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        c2_label = wx.StaticText(panel, wx.ID_ANY, 'x1, y1')
+        c2_label = wx.StaticText(panel, wx.ID_ANY, 'x2, y2')
         self._cx2_text = wxli.IntCtrl(panel, min=0)
         wxutil.size_text_by_chars(self._cx2_text, 5)
         self._cy2_text = wxli.IntCtrl(panel, min=0)
@@ -85,93 +79,88 @@ class Crop(wx.Dialog):
 
         panel.SetSizer(vbox)
         panel.Fit()
-        sz = panel.GetBestSize()
+
+        self.Layout()
+        sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
-    def _select_in_dir(self):
-        new_in_dir = tkutil.select_dir(self, True)
+        self.Bind(wx.EVT_BUTTON, self._select_in_dir, id=self._in_dir_btn_id.GetId())
+        self.Bind(wx.EVT_BUTTON, self._select_out_dir, id=self._out_dir_btn_id.GetId())
+        self.Bind(wx.EVT_BUTTON, self._crop, id=wx.ID_OK)
+        self.Bind(wx.EVT_BUTTON, self._on_cancel, id=wx.ID_CANCEL)
+
+    # noinspection PyUnusedLocal
+    def _select_in_dir(self, event: wx.Event):
+        new_in_dir = wxutil.select_dir(self, True)
         if new_in_dir:
-            self._in_dir.set(new_in_dir)
+            self._in_dir_text.SetValue(new_in_dir)
 
-    def _select_out_dir(self):
-        new_out_dir = tkutil.select_dir(self, False)
+    # noinspection PyUnusedLocal
+    def _select_out_dir(self, event: wx.Event):
+        new_out_dir = wxutil.select_dir(self, False)
         if new_out_dir:
-            self._out_dir.set(new_out_dir)
+            self._out_dir_text.SetValue(new_out_dir)
 
-    def _crop(self):
-        in_path = tkutil.dir_to_path(self._in_dir.get())
-        if in_path is None or not in_path.exists():
+    # noinspection PyUnusedLocal
+    def _crop(self, event: wx.Event):
+        in_path = util.dir_to_path(self._in_dir_text.GetValue())
+        if in_path == '' or not in_path.exists():
             return
         if not any(in_path.glob('*.fits')) and not any(in_path.glob('*.fit')):
             return
-        out_path = tkutil.dir_to_path(self._out_dir.get())
-        if out_path is None:
+        out_path = util.dir_to_path(self._out_dir_text.GetValue())
+        if out_path == '':
             return
 
-        x1 = self._x1.get()
-        x2 = self._x2.get()
-        y1 = self._y1.get()
-        y2 = self._y2.get()
+        x1 = self._cx1_text.GetValue()
+        x2 = self._cx2_text.GetValue()
+        y1 = self._cy1_text.GetValue()
+        y2 = self._cy2_text.GetValue()
         if x1 == x2 or y1 == y2:
             return
 
-        self.withdraw()
         try:
             out_path.mkdir(parents=True, exist_ok=True)
         except PermissionError as err:
-            # mb.showerror(master=self._master,
-            #              message=f'Cannot create output directory: {err}')
-            self.deiconify()
+            with wx.MessageDialog(self, message=f'Cannot create output directory: {err}',
+                                  style=wx.OK | wx.ICON_ERROR | wx.CANCEL, caption='Error') as mb:
+                mb.ShowModal()
             return
 
-        status_queue = queue.Queue()
-        progress = Progress(self._master, 'Cropping...')
-        x_tup = sorted((x1, x2))
-        y_tup = tuple(sorted((y1, y2)))
-
-        # def do_crop():
-        #     _do_crop(in_path, out_path,
-        #              (x_tup[0], x_tup[1]), (y_tup[0], y_tup[1]),
-        #              status_queue, progress)
-        #
-        # bg_exec = BgExec(do_crop, status_queue)
-        progress.start()
-        # bg_exec.start()
-        # self._check_progress(bg_exec, status_queue, progress)
-
-    def _check_progress(self, bg_exec: BgExec, status_queue: Queue, progress: Progress):
-        while not status_queue.empty():
-            event = status_queue.get()
-            # if event.evt_type == bgexec.ERROR:
-            #     progress.withdraw()
-            #     mb.showerror(master=self._master, message=event.client_data)
-            #     self.destroy()
-            #     return
-            # elif event.evt_type == bgexec.FINISHED:
-            #     progress.withdraw()
-            #     mb.showinfo(master=self._master, message=event.client_data)
-            #     self.destroy()
-            #     return
-            progress.message(str(event.client_data))
-        if bg_exec.is_alive():
-            def do_check(): self._check_progress(bg_exec, status_queue, progress)
-            self._master.after(100, do_check)
-
-    def _do_crop(self, in_dir: Path, out_dir: Path,
-                 x: Tuple[int, int], y: Tuple[int, int],
-                 status_queue: Queue, progress: Progress) -> None:
         files = []
-        for in_file in sorted(in_dir.iterdir()):
+        for in_file in sorted(in_path.iterdir()):
             if not in_file.is_file() or not (in_file.suffix in ('.fits', '.fit')):
                 continue
             files.append(in_file)
+        if len(files) == 0:
+            return
+        progress = Progress('Cropping...', parent=self, maximum=len(files) + 1,
+                            message=u'\u00a0' * 30)
+        x_tup = sorted((x1, x2))
+        y_tup = tuple(sorted((y1, y2)))
+
+        args = (
+            files,
+            out_path,
+            x_tup, y_tup,
+            progress
+        )
+
+        self.Bind(EVT_ID_COMPLETION, self._on_completion_event)
+
+        thread = threading.Thread(target=self._do_crop, args=args)
+        thread.start()
+
+    def _do_crop(self, files: Sequence[Path], out_dir: Path,
+                 x: Tuple[int, int], y: Tuple[int, int],
+                 progress: Progress) -> None:
 
         n_processed = 0
         n_files = len(files)
         for in_file in files:
             if progress.WasCancelled():
                 break
-            msg = f'Processing file {n_processed + 1} of {n_files}'
+            msg = f'Processing file {n_processed + 1:d} of {n_files:d}'
             progress.message(n_processed, msg)
             full_out_file = out_dir / in_file.name
             hdu_l = fits.open(in_file)
@@ -183,10 +172,23 @@ class Crop(wx.Dialog):
             hdu_l.close()
             n_processed = n_processed + 1
 
+        msg = f'Processed {n_processed} file(s).'
+        progress.message(n_processed + 1, msg)
 
+        evt = CompletionEvent(progress=progress)
+        self.QueueEvent(evt)
 
-        evt = Event(bgexec.FINISHED, f'Processed {n_processed:<d} file(s).')
-        status_queue.put(evt)
+    def _on_completion_event(self, event: CompletionEvent):
+        progress = event.progress
+        if progress.WasCancelled():
+            progress.Destroy()
+            self.EndModal(wx.OK)
+        else:
+            self.EndModal(wx.CANCEL)
+
+    # noinspection PyUnusedLocal
+    def _on_cancel(self, event):
+        self.EndModal(wx.CANCEL)
 
 
 if __name__ == '__main__':
@@ -200,12 +202,10 @@ if __name__ == '__main__':
     pnl.SetSizer(sizer)
     pnl.Fit()
 
+    # noinspection PyUnusedLocal
     def _on_btn(event):
-        try:
-            dlg = Crop(frame)
+        with Crop(frame) as dlg:
             dlg.ShowModal()
-        finally:
-            dlg.Destroy()
 
     frame.Bind(wx.EVT_BUTTON, _on_btn, id=id_ref.GetId())
     frame.Show()

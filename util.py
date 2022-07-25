@@ -17,3 +17,8 @@ def find_input_files(input_dir: Union[str, bytes, PathLike], input_basename) -> 
     return input_files
 
 
+def dir_to_path(in_dir: str) -> (Path, None):
+    if in_dir is None:
+        return None
+    in_dir_l = in_dir.replace('~', str(Path.home()))
+    return Path(in_dir_l)

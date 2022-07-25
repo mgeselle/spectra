@@ -44,5 +44,5 @@ if __name__ == '__main__':
     disp = ImageDisplay(frame)
     frame.SetMinSize(wx.Size(800, 600))
     frame.Show()
-    disp.display('/home/mgeselle/astrowrk/spectra/cropped/Castor_Light_2022-04-17T22-21-53_001.fits')
+    disp.display('/home/mgeselle/astrowrk/spectra/cropped_b/Castor_Light_2022-04-17T22-21-53_001.fits')
     app.MainLoop()
