@@ -7,7 +7,7 @@ from os import PathLike
 from pathlib import Path
 from time import time
 from typing import Union, Tuple, Sequence, Any, Callable
-from config import config, CameraConfig
+from config import Config, CameraConfig
 from util import find_input_files
 
 import tkinter as tk
@@ -21,18 +21,10 @@ def simple(input_dir: Union[str, bytes, PathLike], input_basename: str,
     headers = []
     out_data = None
     for i in range(len(input_files)):
-        in_hdu_l = fits.open(input_files[i])
-        headers.append(in_hdu_l[0].header)
-        data: npt.NDArray[Any] = in_hdu_l[0].data
-        if len(limits) != 2:
-            raise ValueError('limits have wrong length')
-        lower, upper = sorted(limits)
-        if lower < 0 or upper > data.shape[0]:
-            raise ValueError('limits are out of bounds')
+        spectrum, header = simple_single(input_files[i], limits)
+        headers.append(header)
         if out_data is None:
-            out_data = np.empty((len(input_files), data.shape[1]), dtype=np.float32)
-        spectrum = np.sum(data[lower:upper, :], axis=0, dtype=np.float32)
-        in_hdu_l.close()
+            out_data = np.empty((len(input_files), spectrum.shape[1]), dtype=np.float32)
         out_data[i] = spectrum[:]
     out_spectrum = np.mean(out_data, axis=0)
     out_name = prefix + input_basename
@@ -46,11 +38,25 @@ def simple(input_dir: Union[str, bytes, PathLike], input_basename: str,
     out_hdu.writeto(output_file, overwrite=True)
 
 
+def simple_single(input_file: Path, limits: Union[Tuple[int, int],  Sequence[int]]) -> Tuple[npt.NDArray[Any], fits.Header]:
+    if len(limits) != 2:
+        raise ValueError('limits have wrong length')
+    lower, upper = sorted(limits)
+    in_hdu_l = fits.open(input_file)
+    data: npt.NDArray[Any] = in_hdu_l[0].data
+    if lower < 0 or upper > data.shape[0]:
+        raise ValueError('limits are out of bounds')
+    spectrum = np.sum(data[lower:upper, :], axis=0, dtype=np.float32)
+    header = in_hdu_l[0].header
+    in_hdu_l.close()
+    return spectrum, header
+
+
 def optimal(input_dir: Union[str, bytes, PathLike], input_basename: str,
             config_name: str, output_dir: Union[None, str, bytes, PathLike] = None, prefix='',
             callback: Union[None, Callable[[str], None]] = None) -> Tuple[int, int]:
     input_files = find_input_files(input_dir, input_basename)
-    cam_cfg = config.get_camera_config(config_name)
+    cam_cfg = Config.get().get_camera_config(config_name)
     headers = []
     out_data = None
     d_low = None

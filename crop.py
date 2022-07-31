@@ -1,23 +1,20 @@
 from astropy.io import fits
 from pathlib import Path
-import threading
 from typing import Sequence, Tuple
 import wx
 import wx.lib.intctrl as wxli
-import wx.lib.newevent as ne
 
-from progress import Progress
+from taskdialog import TaskDialog
 import util
 import wxutil
 
 
-CompletionEvent, EVT_ID_COMPLETION = ne.NewEvent()
-
-
-class Crop(wx.Dialog):
+class Crop(TaskDialog):
     def __init__(self, parent: wx.Window, **kwargs):
         super().__init__(parent, **kwargs)
         self.SetTitle('Crop Images')
+        self.progress_title = 'Cropping...'
+        self.message_template = u'\u00a0' * 30
 
         panel = wx.Panel(self)
 
@@ -87,7 +84,7 @@ class Crop(wx.Dialog):
         self.Bind(wx.EVT_BUTTON, self._select_in_dir, id=self._in_dir_btn_id.GetId())
         self.Bind(wx.EVT_BUTTON, self._select_out_dir, id=self._out_dir_btn_id.GetId())
         self.Bind(wx.EVT_BUTTON, self._crop, id=wx.ID_OK)
-        self.Bind(wx.EVT_BUTTON, self._on_cancel, id=wx.ID_CANCEL)
+        self.Bind(wx.EVT_BUTTON, self.on_cancel, id=wx.ID_CANCEL)
 
     # noinspection PyUnusedLocal
     def _select_in_dir(self, event: wx.Event):
@@ -134,34 +131,22 @@ class Crop(wx.Dialog):
             files.append(in_file)
         if len(files) == 0:
             return
-        progress = Progress('Cropping...', parent=self, maximum=len(files) + 1,
-                            message=u'\u00a0' * 30)
+
         x_tup = sorted((x1, x2))
         y_tup = tuple(sorted((y1, y2)))
 
-        args = (
-            files,
-            out_path,
-            x_tup, y_tup,
-            progress
-        )
-
-        self.Bind(EVT_ID_COMPLETION, self._on_completion_event)
-
-        thread = threading.Thread(target=self._do_crop, args=args)
-        thread.start()
+        self.run_task(maximum=len(files) + 1, target=self._do_crop,
+                      args=(files, out_path, x_tup, y_tup))
 
     def _do_crop(self, files: Sequence[Path], out_dir: Path,
-                 x: Tuple[int, int], y: Tuple[int, int],
-                 progress: Progress) -> None:
+                 x: Tuple[int, int], y: Tuple[int, int]) -> None:
 
         n_processed = 0
         n_files = len(files)
         for in_file in files:
-            if progress.WasCancelled():
+            if self.cancel_flag.is_set():
                 break
-            msg = f'Processing file {n_processed + 1:d} of {n_files:d}'
-            progress.message(n_processed, msg)
+            self.send_progress(n_processed, f'Processing file {n_processed + 1:d} of {n_files:d}')
             full_out_file = out_dir / in_file.name
             hdu_l = fits.open(in_file)
             header = hdu_l[0].header
@@ -172,23 +157,8 @@ class Crop(wx.Dialog):
             hdu_l.close()
             n_processed = n_processed + 1
 
-        msg = f'Processed {n_processed} file(s).'
-        progress.message(n_processed + 1, msg)
-
-        evt = CompletionEvent(progress=progress)
-        self.QueueEvent(evt)
-
-    def _on_completion_event(self, event: CompletionEvent):
-        progress = event.progress
-        if progress.WasCancelled():
-            progress.Destroy()
-            self.EndModal(wx.OK)
-        else:
-            self.EndModal(wx.CANCEL)
-
-    # noinspection PyUnusedLocal
-    def _on_cancel(self, event):
-        self.EndModal(wx.CANCEL)
+        if not self.cancel_flag.is_set():
+            self.send_progress(n_processed + 1, f'Processed {n_processed} file(s).')
 
 
 if __name__ == '__main__':
@@ -204,8 +174,16 @@ if __name__ == '__main__':
 
     # noinspection PyUnusedLocal
     def _on_btn(event):
-        with Crop(frame) as dlg:
-            dlg.ShowModal()
+        button.Disable()
+        crp = Crop(frame, id=4711)
+
+        def _on_complete(evt: wx.ShowEvent):
+            if not evt.IsShown():
+                crp.Destroy()
+                button.Enable()
+
+        crp.Bind(wx.EVT_SHOW, _on_complete)
+        crp.Show()
 
     frame.Bind(wx.EVT_BUTTON, _on_btn, id=id_ref.GetId())
     frame.Show()

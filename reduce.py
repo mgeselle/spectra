@@ -7,12 +7,12 @@ import tkinter.ttk as ttk
 import tkutil
 from typing import Union
 import bgexec
-from config import config
+from config import Config
 from dark import Dark
 from extract import optimal as ex_optimal
 from extract import simple as ex_simple
 from flat import Flat
-from progress import Progress
+from taskdialog import Progress
 from rotate import Rotate
 from slant import Slant
 

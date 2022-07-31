@@ -1,8 +1,8 @@
 from astropy.io import fits
 from astropy.visualization import ImageNormalize, MinMaxInterval, AsinhStretch
-from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
+from matplotlib.figure import Figure
 from os import PathLike
 from pathlib import Path
 from typing import Union
@@ -10,8 +10,8 @@ import wx
 
 
 class ImageDisplay(wx.Panel):
-    def __init__(self, parent: wx.Window):
-        super().__init__(parent)
+    def __init__(self, parent: wx.Window, **kwargs):
+        super().__init__(parent, **kwargs)
 
         self._figure = Figure()
         self._axes = self._figure.add_subplot(111)

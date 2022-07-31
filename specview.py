@@ -1,34 +1,32 @@
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
+from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
 from matplotlib.backend_bases import MouseEvent
 from matplotlib.figure import Figure
 import numpy as np
 import numpy.typing as npt
-import tkinter as tk
-from tkinter import ttk
 from typing import Union, Any, Callable, SupportsFloat, SupportsInt
+import wx
 
 
-class Specview(ttk.Frame):
-    def __init__(self, master: Union[tk.Widget, ttk.Widget, tk.Tk, tk.Toplevel], **kwargs):
-        super().__init__(master, **kwargs)
-        if 'width' in kwargs:
-            width = kwargs['width']
-        else:
-            width = 1024
-        if 'height' in kwargs:
-            height = kwargs['height']
-        else:
-            height = 768
-        dpi = master.winfo_toplevel().winfo_fpixels('1i')
-        self._fig = Figure(figsize=(width / dpi, height / dpi), dpi=dpi)
-        self._axes = self._fig.add_subplot()
+class Specview(wx.Panel):
+    def __init__(self, parent: wx.Window, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._fig = Figure()
+        self._axes = self._fig.add_subplot(111)
         self._axes.set_xlabel('Pixels')
         self._axes.set_ylabel('Flux [ADU]')
         self._lines = dict()
         self._xdata = None
         self._line_id = 0
-        self._canvas = FigureCanvasTkAgg(self._fig, master=self)
-        self._canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH)
+        self._canvas = FigureCanvas(self, wx.ID_ANY, self._fig)
+        self._toolbar = NavigationToolbar(self._canvas)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._canvas, 1, wx.LEFT | wx.TOP | wx.GROW)
+        sizer.Add(self._toolbar, 0, wx.LEFT | wx.EXPAND)
+        self.SetSizer(sizer)
+        self.Fit()
+
         self._picking_cb = None
         self._picking_me_cid = None
         self._picking_pi_cid = None
@@ -86,3 +84,17 @@ class Specview(ttk.Frame):
         if event.inaxes != self._axes:
             return
         self._picking_cb(event.xdata, event.key == 'shift')
+
+
+if __name__ == '__main__':
+    import extract
+    from pathlib import Path
+
+    app = wx.App()
+    frame = wx.Frame(None, title='Spectrum View')
+    disp = Specview(frame)
+    frame.SetMinSize(wx.Size(800, 600))
+    frame.Show()
+    spectrum, _ = extract.simple_single(Path.home() / 'astrowrk/spectra/reduced/rot-drk-flat.fits', (150, 200))
+    disp.add_spectrum(spectrum[1:spectrum.shape[0] - 2])
+    app.MainLoop()

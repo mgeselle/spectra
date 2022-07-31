@@ -27,3 +27,17 @@ def select_dir(parent: wx.Window, must_exist: bool) -> Union[None, str]:
         Config.get().set_last_directory(raw_result)
         return raw_result.replace(str(Path.home()), '~')
 
+
+def select_file(parent: wx.Window) -> Union[None, str]:
+    initial_dir = str(Config.get().get_last_directory())
+    with wx.FileDialog(parent, message='Open FITS file', defaultDir=initial_dir,
+                       wildcard='FITS files (*.fit;*.fits)|*.fit;*.fits',
+                       style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dlg:
+        dlg_res = dlg.ShowModal()
+        if dlg_res == wx.ID_CANCEL:
+            return None
+        result = dlg.GetPath()
+        result_path = Path(result)
+        Config.get().set_last_directory(result_path.parent)
+        return result
+

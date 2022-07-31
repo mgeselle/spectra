@@ -1,109 +1,122 @@
 from astropy.io import fits
-import os
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk
-from tkinter import filedialog as fd
+import sys
+import wx
+
 from combine import Combine
-from config import CamCfgGUI
+from configgui import CamCfgGUI
 from crop import Crop
-from fitsfile import FitsImageFile
-from image_display import ImageDisplay
-from reduce import Reduce
+from imgdisplay import ImageDisplay
+#from reduce import Reduce
 from specview import Specview
-import spectra
+import wxutil
 
 
-class Main(ttk.Frame):
-    def __init__(self, root: tk.Tk):
-        super().__init__(root)
-        root.resizable(True, True)
-        width = int(0.5 * root.winfo_screenwidth())
-        height = int(0.5 * root.winfo_screenheight())
-        if width > 1024: width = 1024
-        if height > 768: height = 768
-        root.geometry(f"{width: <d}x{height: <d}")
+ID_OPEN = wx.NewIdRef()
+ID_COMBINE = wx.NewIdRef()
+ID_CROP = wx.NewIdRef()
+ID_REDUCE = wx.NewIdRef()
+ID_CFG_CAMERA = wx.NewIdRef()
 
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=1)
 
-        self.grid(column=0, row=0, sticky=tk.N+tk.S+tk.E+tk.W)
+class Main(wx.Frame):
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.SetTitle('Spectra')
 
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        menubar = wx.MenuBar()
 
-        menubar = tk.Menu(root)
-        root.config(menu=menubar)
+        self._file_menu = wx.Menu()
+        open_item = self._file_menu.Append(ID_OPEN.GetId(), '&Open File...')
+        self._file_menu.AppendSeparator()
+        exit_item = self._file_menu.Append(wx.ID_EXIT)
+        menubar.Append(self._file_menu, '&File')
 
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label='Open...', underline=0, command=self.__open)
-        file_menu.add_separator()
-        file_menu.add_command(label='Exit', underline=1, command=root.destroy)
+        self._img_ops_menu = wx.Menu()
+        combine_item = self._img_ops_menu.Append(ID_COMBINE.GetId(), '&Combine...')
+        crop_item = self._img_ops_menu.Append(ID_CROP.GetId(), 'Cro&p...')
+        reduce_item = self._img_ops_menu.Append(ID_REDUCE.GetId(), '&Reduce...')
+        menubar.Append(self._img_ops_menu, '&Image Ops')
 
-        menubar.add_cascade(label='File', underline=0, menu=file_menu)
+        self._config_menu = wx.Menu()
+        camera_item = self._config_menu.Append(ID_CFG_CAMERA.GetId(), '&Camera')
+        menubar.Append(self._config_menu, '&Configuration')
 
-        img_ops_menu = tk.Menu(menubar, tearoff=False)
-        img_ops_menu.add_command(label='Combine...', underline=0,
-                                 command=lambda: Combine(self.winfo_toplevel()))
-        img_ops_menu.add_command(label='Crop...', underline=3,
-                                 command=lambda: Crop(self.winfo_toplevel()))
-        img_ops_menu.add_command(label='Reduce...', underline=0,
-                                 command=lambda: Reduce(self.winfo_toplevel()))
+        self.SetMenuBar(menubar)
 
-        menubar.add_cascade(label='Image Ops', underline=0, menu=img_ops_menu)
-
-        cfg_menu = tk.Menu(menubar, tearoff=False)
-        cfg_menu.add_command(label='Camera', underline=0,
-                             command=lambda: CamCfgGUI(self.winfo_toplevel()))
-
-        menubar.add_cascade(label='Configuration', underline=0, menu=cfg_menu)
-
-        self._image_display = ImageDisplay(self)
-        self._image_display.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
-
-        root.update_idletasks()
-        self._image_display.grid_remove()
-        self._specview = Specview(self, width=self.winfo_width(), height=self.winfo_height())
-        self._specview.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+        self._content_pane = wx.Panel(self)
+        self._image_display = ImageDisplay(self._content_pane)
+        self._specview = Specview(self._content_pane)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self._content_pane.SetSizer(sizer)
+        sizer.Add(self._image_display, 1, wx.EXPAND)
+        sizer.Add(self._specview, 1, wx.EXPAND)
+        sizer.Show(self._image_display, False)
+        sizer.Layout()
         self._specview_visible = True
 
-    def __open(self):
-        file_types = (('FITS', '*.fit *.fits'), ('all', '*'))
-        file_name = fd.askopenfilename(title='Open FITS file', filetypes=file_types,
-                                       initialdir=spectra.current_dir)
+        self.Bind(wx.EVT_MENU, self._open, open_item)
+        self.Bind(wx.EVT_MENU, lambda evt: sys.exit(0), exit_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Combine(self)), combine_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Crop(self)), crop_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
+
+        display = wx.Display()
+        display_sz = display.GetClientArea()
+        width = int(0.6 * display_sz.GetWidth())
+        height = int(0.6 * display_sz.GetHeight())
+        self.SetSizeHints(width, height)
+
+    def make_specview_visible(self, visible: bool):
+        if visible == self._specview_visible:
+            return
+        sizer = self._content_pane.GetSizer()
+        sizer.Show(self._image_display, not visible)
+        sizer.Show(self._specview, visible)
+        sizer.Layout()
+
+    # noinspection PyUnusedLocal
+    def _open(self, event: wx.Event):
+        file_name = wxutil.select_file(self)
         if not file_name:
             return
-        spectra.current_dir = Path(file_name).parent
+        file_path = Path(file_name)
+        self.SetTitle(f'Spectra - {file_path.name}')
         hdu_l = fits.open(file_name)
         header = hdu_l[0].header
         data = hdu_l[0].data
         hdu_l.close()
         if header['NAXIS'] == 1:
-            if not self._specview_visible:
-                self._image_display.grid_forget()
-                self._specview.grid()
-                self._specview_visible = True
+            self.make_specview_visible(True)
             self._specview.clear()
             self._specview.add_spectrum(data)
         elif header['NAXIS'] == 2:
             data = None
-            if self._specview_visible:
-                self._specview.grid_forget()
-                self._specview_visible = False
-                self._image_display.grid()
-            fits_image = FitsImageFile(file_name)
-            self._image_display.set_image(fits_image)
+            self.make_specview_visible(False)
+            self._image_display.display(file_name)
 
-    def __combine(self):
-        Combine(self.winfo_toplevel())
+    @staticmethod
+    def _enable_after_close(event: wx.ShowEvent, menu: wx.Menu, item_id: int):
+        if not event.IsShown():
+            menu.Enable(item_id, True)
+
+    @staticmethod
+    def _show_dialog(event: wx.CommandEvent, dialog: wx.Dialog):
+        menu = event.GetEventObject()
+        item = event.GetId()
+        menu.Enable(item, False)
+        dialog.Bind(wx.EVT_SHOW, lambda evt: Main._enable_after_close(evt, menu, item))
+        dialog.Show()
 
 
 if __name__ == '__main__':
-    os.chdir(spectra.current_dir)
-    main = tk.Tk()
-    main.wm_title("Spectra")
-    main_frame = Main(main)
-    main.eval('tk::PlaceWindow . center')
-    tk.mainloop()
+    app = wx.App()
+    app.SetAppName('spectra')
+
+    main = Main(None)
+    app.SetTopWindow(main)
+    main.Show()
+
+    app.MainLoop()
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/
