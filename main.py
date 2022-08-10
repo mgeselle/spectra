@@ -7,7 +7,7 @@ from combine import Combine
 from configgui import CamCfgGUI
 from crop import Crop
 from imgdisplay import ImageDisplay
-#from reduce import Reduce
+from reduce import Reduce
 from specview import Specview
 import wxutil
 
@@ -59,6 +59,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: sys.exit(0), exit_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Combine(self)), combine_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Crop(self)), crop_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Reduce(self)), reduce_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
 
         display = wx.Display()
@@ -74,6 +75,7 @@ class Main(wx.Frame):
         sizer.Show(self._image_display, not visible)
         sizer.Show(self._specview, visible)
         sizer.Layout()
+        self._specview_visible = visible
 
     # noinspection PyUnusedLocal
     def _open(self, event: wx.Event):

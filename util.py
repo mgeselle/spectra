@@ -22,3 +22,12 @@ def dir_to_path(in_dir: str) -> (Path, None):
         return None
     in_dir_l = in_dir.replace('~', str(Path.home()))
     return Path(in_dir_l)
+
+
+def remove_dir_recursively(rem_dir: Path) -> None:
+    for item in rem_dir.iterdir():
+        if item.is_dir():
+            remove_dir_recursively(item)
+        else:
+            item.unlink()
+    rem_dir.rmdir()

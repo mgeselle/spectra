@@ -1,297 +1,347 @@
+import itertools
 from pathlib import Path
-from queue import Queue
-import tkinter as tk
-import tkinter.filedialog as fd
-import tkinter.messagebox as mb
-import tkinter.ttk as ttk
-import tkutil
-from typing import Union
-import bgexec
+import tempfile
+from typing import Union, Sequence, Iterable, Callable
+import wx
+
+import flat
 from config import Config
 from dark import Dark
 from extract import optimal as ex_optimal
 from extract import simple as ex_simple
-from flat import Flat
-from taskdialog import Progress
+from flat import FlatDialog
+from taskdialog import TaskDialog
 from rotate import Rotate
 from slant import Slant
+import util
+import wxutil
 
 
-def _reduce(input_dir: str, master_dir: Union[str, None], output_dir: Union[str, None],
-            bias_basename: str, dark_basename: str, flat_basename: str,
-            calibration: str, program: str, cfg_name: str,
-            status_queue: Queue, progress: Progress):
-
-    event = bgexec.Event(bgexec.INFO, 'Applying dark correction.')
-    status_queue.put(event)
-
-    def callback(msg: str):
-        evt = bgexec.Event(bgexec.INFO, msg)
-        status_queue.put(evt)
-
-    cumul_pfx = ''
-    if not progress.is_cancelled():
-        dark_prefix = 'drk-'
-        dark = Dark(master_dir, bias_basename, dark_basename)
-        input_names = [calibration, program]
-        if flat_basename is not None and flat_basename.strip() != '':
-            input_names.append(flat_basename)
-        dark.correct(input_dir, input_names, output_dir, dark_prefix, callback)
-        cumul_pfx = dark_prefix
-
-    if not progress.is_cancelled():
-        rot_prefix = 'rot-'
-        rot = Rotate(output_dir, cumul_pfx + program)
-        input_names = [cumul_pfx + calibration,
-                       cumul_pfx + program]
-        if flat_basename is not None:
-            input_names.append(cumul_pfx + flat_basename)
-        rot.rotate(output_dir, input_names, output_dir, rot_prefix)
-        cumul_pfx = rot_prefix + cumul_pfx
-
-    if not progress.is_cancelled() and flat_basename is not None and flat_basename.strip() != '':
-        flt = Flat(progress, output_dir, cumul_pfx + flat_basename)
-        input_names = [cumul_pfx + calibration, cumul_pfx + program]
-        flat_prefix = 'flt-'
-        flt.apply(input_names, prefix=flat_prefix)
-        flt.destroy()
-        cumul_pfx = flat_prefix + cumul_pfx
-
-    if not progress.is_cancelled():
-        slt = Slant(output_dir, cumul_pfx + calibration)
-        input_names = [cumul_pfx + calibration, cumul_pfx + program]
-        slant_prefix = 'slt-'
-        slt.apply(input_names, prefix=slant_prefix)
-        cumul_pfx = slant_prefix + cumul_pfx
-
-    if not progress.is_cancelled():
-        d_low, d_high = ex_optimal(output_dir, cumul_pfx + program, cfg_name, output_dir, 'p1d-', callback)
-        ex_simple(output_dir, cumul_pfx + calibration, (d_low, d_high), output_dir, 'c1d-')
-
-    event = bgexec.Event(bgexec.FINISHED, 'Data reduction complete.')
-    status_queue.put(event)
-
-
-class Reduce(tk.Toplevel):
-    _last_dir_selected = Path.home()
+class Reduce(TaskDialog):
     _last_input_dir = None
     _last_master_dir = None
     _last_output_dir = None
 
-    def __init__(self, parent: Union[tk.Tk, tk.Toplevel]):
-        super().__init__(parent)
-        self.title('Reduce Images')
+    def __init__(self, parent: wx.Window, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.SetTitle('Reduce Images')
+        self.progress_title = 'Reducing...'
 
-        self._master = parent
+        panel = wx.Panel(self)
 
-        x_pad = 10
-        y_pad = 10
-        entry_w = 40
+        text_chars = 40
+        in_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Input Directory:')
+        self._in_dir_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._in_dir_text, text_chars)
+        folder_bmp = wx.ArtProvider.GetBitmap(wx.ART_FOLDER_OPEN, wx.ART_BUTTON)
+        self._in_dir_btn_id = wx.NewIdRef()
+        in_dir_btn = wx.BitmapButton(panel, id=self._in_dir_btn_id.GetId(), bitmap=folder_bmp)
+        in_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        in_dir_sizer.Add(self._in_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        in_dir_sizer.Add(in_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        top = ttk.Frame(self, relief=tk.RAISED)
-        top.pack(side=tk.TOP, fill=tk.BOTH, ipadx=x_pad, ipady=y_pad)
+        master_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Master Directory:')
+        self._master_dir_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._master_dir_text, text_chars)
+        self._master_dir_btn_id = wx.NewIdRef()
+        master_dir_btn = wx.BitmapButton(panel, id=self._master_dir_btn_id.GetId(), bitmap=folder_bmp)
+        master_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        master_dir_sizer.Add(self._master_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        master_dir_sizer.Add(master_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        input_dir_label = ttk.Label(top, text='Input Directory:')
-        input_dir_label.grid(row=0, column=0, padx=(x_pad, x_pad),
-                             pady=(2*y_pad, 0), sticky=tk.W)
-        self._input_dir = tk.StringVar(top)
-        input_dir = ttk.Entry(top, width=entry_w, textvariable=self._input_dir,
-                              takefocus=True)
-        input_dir.grid(row=0, column=1, padx=(x_pad, x_pad),
-                       pady=(2*y_pad, 0), sticky=tk.W)
-        self._folder_icon = tkutil.load_icon(top, 'folder')
-        get_input_folder = ttk.Button(top, image=self._folder_icon,
-                                      command=self._get_input_dir)
-        get_input_folder.grid(row=0, column=2, padx=(0, x_pad),
-                              pady=(2*y_pad, 0), sticky=tk.W)
+        output_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Output Directory:')
+        self._output_dir_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._output_dir_text, text_chars)
+        self._output_dir_btn_id = wx.NewIdRef()
+        output_dir_btn = wx.BitmapButton(panel, id=self._output_dir_btn_id.GetId(), bitmap=folder_bmp)
+        output_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        output_dir_sizer.Add(self._output_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        output_dir_sizer.Add(output_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        master_dir_label = ttk.Label(top, text='Master Directory:')
-        master_dir_label.grid(row=1, column=0, padx=(x_pad, x_pad),
-                              pady=(y_pad, 0), sticky=tk.W)
-        self._master_dir = tk.StringVar(top)
-        master_dir = ttk.Entry(top, width=entry_w, textvariable=self._master_dir,
-                               takefocus=True)
-        master_dir.grid(row=1, column=1, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
-        get_master_folder = ttk.Button(top, image=self._folder_icon,
-                                       command=self._get_master_dir)
-        get_master_folder.grid(row=1, column=2, padx=(0, x_pad),
-                               pady=(y_pad, 0), sticky=tk.W)
+        bias_label = wx.StaticText(panel, wx.ID_ANY, 'Bias Pattern:')
+        self._bias_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._bias_text, text_chars)
 
-        output_dir_label = ttk.Label(top, text='Output Directory:')
-        output_dir_label.grid(row=2, column=0, padx=(x_pad, x_pad),
-                              pady=(y_pad, 0), sticky=tk.W)
-        self._output_dir = tk.StringVar(top)
-        output_dir = ttk.Entry(top, width=entry_w, textvariable=self._output_dir,
-                               takefocus=True)
-        output_dir.grid(row=2, column=1, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
-        get_output_folder = ttk.Button(top, image=self._folder_icon,
-                                       command=self._get_output_dir)
-        get_output_folder.grid(row=2, column=2, padx=(0, x_pad),
-                               pady=(y_pad, 0), sticky=tk.W)
+        dark_label = wx.StaticText(panel, wx.ID_ANY, 'Dark Pattern:')
+        self._dark_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._dark_text, text_chars)
 
-        bias_label = ttk.Label(top, text='Bias:')
-        bias_label.grid(row=3, column=0, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
-        self._bias_basename = tk.StringVar(top)
-        bias_entry = ttk.Entry(top, width=entry_w, textvariable=self._bias_basename,
-                               takefocus=True)
-        bias_entry.grid(row=3, column=1, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
+        flat_label = wx.StaticText(panel, wx.ID_ANY, 'Flat Pattern:')
+        self._flat_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._flat_text, text_chars)
 
-        dark_label = ttk.Label(top, text='Dark Basename:')
-        dark_label.grid(row=4, column=0, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
-        self._dark_basename = tk.StringVar(top)
-        dark_entry = ttk.Entry(top, width=entry_w, textvariable=self._dark_basename,
-                               takefocus=True)
-        dark_entry.grid(row=4, column=1, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
+        calib_label = wx.StaticText(panel, wx.ID_ANY, 'Calibration Pattern:')
+        self._calib_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._calib_text, text_chars)
 
-        flat_label = ttk.Label(top, text='Flat:')
-        flat_label.grid(row=5, column=0, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
-        self._flat_basename = tk.StringVar(top)
-        flat_entry = ttk.Entry(top, width=entry_w, textvariable=self._flat_basename,
-                               takefocus=True)
-        flat_entry.grid(row=5, column=1, padx=(x_pad, x_pad),
-                        pady=(y_pad, 0), sticky=tk.W)
+        pgm_label = wx.StaticText(panel, wx.ID_ANY, 'Program Pattern:')
+        self._pgm_text = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._pgm_text, text_chars)
 
-        calib_label = ttk.Label(top, text='Calibration:')
-        calib_label.grid(row=6, column=0, padx=(x_pad, x_pad),
-                         pady=(y_pad, 0), sticky=tk.W)
-        self._calib_basename = tk.StringVar(top)
-        calib_entry = ttk.Entry(top, width=entry_w, textvariable=self._calib_basename,
-                                takefocus=True)
-        calib_entry.grid(row=6, column=1, padx=(x_pad, x_pad),
-                         pady=(y_pad, 0), sticky=tk.W)
+        cam_cfg_label = wx.StaticText(panel, wx.ID_ANY, 'Camera Configuration:')
+        config_values = Config.get().get_camera_configs()
+        self._cam_cfg_combo = wx.ComboBox(panel, value=config_values[0], choices=config_values,
+                                          style=wx.CB_DROPDOWN | wx.CB_READONLY)
+        wxutil.size_text_by_chars(self._cam_cfg_combo, 30)
 
-        pgm_label = ttk.Label(top, text='Program Basename:')
-        pgm_label.grid(row=7, column=0, padx=(x_pad, x_pad),
-                       pady=(y_pad, 0), sticky=tk.W)
-        self._pgm_basename = tk.StringVar(top)
-        pgm_entry = ttk.Entry(top, width=entry_w, textvariable=self._pgm_basename,
-                              takefocus=True)
-        pgm_entry.grid(row=7, column=1, padx=(x_pad, x_pad),
-                       pady=(y_pad, 0), sticky=tk.W)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        grid = wx.FlexGridSizer(rows=9, cols=2, hgap=5, vgap=5)
+        grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(in_dir_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(master_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(master_dir_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(output_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(output_dir_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(bias_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._bias_text, 1, wx.ALIGN_LEFT)
+        grid.Add(dark_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._dark_text, 1, wx.ALIGN_LEFT)
+        grid.Add(flat_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._flat_text, 1, wx.ALIGN_LEFT)
+        grid.Add(calib_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._calib_text, 1, wx.ALIGN_LEFT)
+        grid.Add(pgm_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._pgm_text, 1, wx.ALIGN_LEFT)
+        grid.Add(cam_cfg_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._cam_cfg_combo, 1, wx.ALIGN_LEFT)
 
-        cam_cfg_label = ttk.Label(top, text='Camera Configuration:')
-        cam_cfg_label.grid(row=8, column=0, padx=(x_pad, x_pad),
-                           pady=(y_pad, 0), sticky=tk.W)
-        self._cam_cfg_name = tk.StringVar(top)
-        cam_cfg_combo = ttk.Combobox(top, width=30, state='readonly',
-                                     textvariable=self._cam_cfg_name, values=config.get_camera_configs())
-        cam_cfg_combo.grid(row=8, column=1, padx=(x_pad, x_pad),
-                           pady=(y_pad, 0), sticky=tk.W)
+        btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
 
-        bottom = ttk.Frame(self, relief=tk.RAISED)
-        bottom.pack(side=tk.TOP, fill=tk.BOTH, ipadx=x_pad, ipady=y_pad)
-        ok_button = ttk.Button(bottom, text='OK', command=self._do_reduce)
-        ok_button.pack(side=tk.LEFT, expand=True)
-        cancel_button = ttk.Button(bottom, text='Cancel', command=self.destroy)
-        cancel_button.pack(side=tk.LEFT, expand=True)
+        vbox.Add(grid, 0, wx.ALL, border=10)
+        vbox.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
 
-        tkutil.center_on_parent(parent, self)
+        panel.SetSizer(vbox)
+        panel.Fit()
 
-    def _get_input_dir(self) -> None:
-        in_dir = self._get_folder(Reduce._last_input_dir, True)
-        if in_dir is not None:
-            self._input_dir.set(in_dir)
-            Reduce._last_input_dir = in_dir
+        self.Layout()
+        sz = self.GetBestSize()
+        self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
-    def _get_output_dir(self) -> None:
-        out_dir = self._get_folder(Reduce._last_output_dir, False)
-        if out_dir is not None:
-            self._output_dir.set(out_dir)
-            Reduce._last_output_dir = out_dir
+        self.Bind(wx.EVT_BUTTON, self._get_input_dir, id=self._in_dir_btn_id.GetId())
+        self.Bind(wx.EVT_BUTTON, self._get_master_dir, id=self._master_dir_btn_id.GetId())
+        self.Bind(wx.EVT_BUTTON, self._get_output_dir, id=self._output_dir_btn_id.GetId())
+        self.Bind(wx.EVT_BUTTON, self._do_reduce, id=wx.ID_OK)
+        self.Bind(wx.EVT_BUTTON, self.on_cancel, id=wx.ID_CANCEL)
 
-    def _get_master_dir(self) -> None:
-        mst_dir = self._get_folder(Reduce._last_master_dir, True)
-        if mst_dir is not None:
-            self._master_dir.set(mst_dir)
-            Reduce._last_master_dir = mst_dir
+    def _get_input_dir(self, event: wx.CommandEvent) -> None:
+        in_dir = wxutil.select_dir(self, True)
+        if in_dir:
+            self._in_dir_text.SetValue(in_dir)
 
-    def _get_folder(self, initialdir: Union[str, Path, None], mustexist: bool) -> Union[str, None]:
-        if initialdir is None:
-            initialdir = Reduce._last_dir_selected
-        raw_result = fd.askdirectory(parent=self, initialdir=initialdir, mustexist=mustexist)
-        if not raw_result:
-            return
-        Reduce._last_dir_selected = Path(raw_result)
-        if raw_result.startswith(str(Path.home())):
-            raw_result = raw_result.replace(str(Path.home()), '~')
+    def _get_output_dir(self, event: wx.CommandEvent) -> None:
+        out_dir = wxutil.select_dir(self, False)
+        if out_dir:
+            self._output_dir_text.SetValue(out_dir)
 
-        return raw_result
+    def _get_master_dir(self, event: wx.CommandEvent) -> None:
+        mst_dir = wxutil.select_dir(self, True)
+        if mst_dir:
+            self._master_dir_text.SetValue(mst_dir)
 
-    def _do_reduce(self) -> None:
-        input_dir = self._input_dir.get()
+    def _do_reduce(self, event: wx.CommandEvent) -> None:
+        input_dir = self._in_dir_text.GetValue().strip()
         if not input_dir:
             return
-        home_dir = str(Path.home())
-        input_dir = input_dir.replace('~', home_dir)
-        output_dir = self._output_dir.get()
+        input_path = wxutil.ensure_dir_exists(input_dir, 'input', self)
+        if not input_path:
+            return
+        output_dir = self._output_dir_text.GetValue().strip()
         if not output_dir:
             return
-        output_dir = output_dir.replace('~', home_dir)
-        master_dir = self._master_dir.get()
+        master_dir = self._master_dir_text.GetValue().strip()
         if not master_dir:
-            master_dir = input_dir
+            master_path = input_path
         else:
-            master_dir = master_dir.replace('~', home_dir)
-        bias_name = self._bias_basename.get()
-        dark_name = self._dark_basename.get()
-        flat_name = self._flat_basename.get()
-        pgm_basename = self._pgm_basename.get()
-        if not pgm_basename:
+            master_path = wxutil.ensure_dir_exists(master_dir, 'master', self)
+        bias_pattern = self._bias_text.GetValue().strip()
+        if not bias_pattern:
             return
-        calib_name = self._calib_basename.get()
-        if not calib_name:
+        bias_path = wxutil.find_files_by_pattern(master_path, bias_pattern, 'bias', self,
+                                                 unique=True)
+        if not bias_path:
             return
-
-        self.withdraw()
-
-        out_path = Path(output_dir)
-        try:
-            out_path.mkdir(parents=True, exist_ok=True)
-        except PermissionError as err:
-            mb.showerror(master=self, message=f'Cannot create output dir: {err}.')
-            self.deiconify()
+        dark_pattern = self._dark_text.GetValue().strip()
+        if not dark_pattern:
             return
-
-        status_queue = Queue()
-        progress = Progress(self._master, 'Reducing Images')
-
-        def run_reduce():
-            _reduce(input_dir=input_dir, master_dir=master_dir, output_dir=output_dir,
-                    bias_basename=bias_name, dark_basename=dark_name,
-                    flat_basename=flat_name, calibration=calib_name, program=pgm_basename,
-                    cfg_name=self._cam_cfg_name.get(),
-                    status_queue=status_queue, progress=progress)
-
-        bg_exec = bgexec.BgExec(run_reduce, status_queue)
-        progress.start()
-        bg_exec.start()
-        self._check_progress(bg_exec, status_queue, progress)
-
-    def _check_progress(self, bg_exec: bgexec.BgExec, status_queue: Queue, progress: Progress):
-        while not status_queue.empty():
-            event = status_queue.get()
-            if event.evt_type == bgexec.INFO:
-                progress.message(str(event.client_data))
-            elif event.evt_type == bgexec.ERROR:
-                progress.destroy()
-                mb.showerror(master=self, message=str(event.client_data))
-                self.deiconify()
+        dark_files = wxutil.find_files_by_pattern(master_path, dark_pattern, 'dark', self)
+        if not dark_files:
+            return
+        flat_pattern = self._flat_text.GetValue().strip()
+        if flat_pattern:
+            flat_file = wxutil.find_files_by_pattern(master_path, flat_pattern, 'flat', self,
+                                                     unique=True)
+            if not flat_file:
                 return
+        else:
+            flat_file = None
+        pgm_pattern = self._pgm_text.GetValue().strip()
+        if not pgm_pattern:
+            return
+        pgm_files = wxutil.find_files_by_pattern(input_path, pgm_pattern, 'program', self)
+        if not pgm_files:
+            return
+        calib_pattern = self._calib_text.GetValue().strip()
+        if not calib_pattern:
+            return
+        calib_path = wxutil.find_files_by_pattern(input_path, calib_pattern, 'calibration', self,
+                                                  unique=True)
+        if not calib_path:
+            return
+        output_path = wxutil.create_dir(output_dir, 'output', self)
+        if not output_path:
+            return
+        cfg_name = self._cam_cfg_combo.GetValue()
+
+        dark_output = Path(tempfile.mkdtemp(dir=output_path))
+        pgm_out = [dark_output / f.name for f in pgm_files]
+        flat_and_calib = [calib_path]
+        calib_out = dark_output / calib_path.name
+        if flat_file:
+            flat_and_calib.append(flat_file)
+            flat_out = dark_output / flat_file.name
+
+            def dark_completion():
+                self._reduce_flat(flat_out, calib_out, pgm_out, output_path, cfg_name)
+
+            self.completion_callback = dark_completion
+            self.auto_hide = True
+        else:
+            flat_out = None
+
+        dark_input = itertools.chain(pgm_files, flat_and_calib)
+        dark_args = [bias_path, dark_files, dark_input, dark_output]
+        if flat_file:
+            dark_args.append(None)
+        else:
+
+            def dark_continue():
+                self._reduce_1d(calib_out, pgm_out, output_path, cfg_name, budget=50, start_with=50)
+
+            dark_args.append(dark_continue)
+
+        progress_limit = 100
+        self.run_task(progress_limit, self._reduce_dark, dark_args)
+
+    def _reduce_dark(self, bias_path: Path, dark_files: Sequence[Path], files: Iterable[Path],
+                     output_path: Path, continuation: Union[Callable[[], None], None]):
+        total_budget = 100
+        if continuation:
+            total_budget /= 2
+        half_budget = int(total_budget / 2)
+
+        self.send_progress(0, 'Applying dark correction.')
+        dark = Dark(bias_path, dark_files)
+        if self.cancel_flag.is_set():
+            return
+        # output_path is a temporary directory under the output dir.
+        # Create another temporary directory under the output dir.
+        dark_output = Path(tempfile.mkdtemp(dir=output_path.parent))
+        file_list = list(files)
+        dark.correct(file_list, dark_output, self.send_progress, budget=half_budget, start_with=0)
+        if self.cancel_flag.is_set():
+            util.remove_dir_recursively(dark_output)
+            return
+
+        dark_corrected = [dark_output / f.name for f in file_list]
+        self.send_progress(half_budget, 'Rotating files.')
+        rot = Rotate(file_list[0])
+        if self.cancel_flag.is_set():
+            util.remove_dir_recursively(dark_output)
+            util.remove_dir_recursively(output_path)
+            return
+        rot.rotate(dark_corrected, output_path, self.send_progress, budget=half_budget, start_with=half_budget)
+        util.remove_dir_recursively(dark_output)
+
+        if continuation:
+            continuation()
+
+    def _reduce_flat(self, flat_file: Path, calib_file: Path, pgm_files: Sequence[Path], output_path: Path,
+                     cfg_name: str):
+        flat_dlg = FlatDialog(self, flat_file)
+
+        def on_flat_hide(evt: wx.ShowEvent):
+            if evt.IsShown():
+                evt.Skip()
+                return
+            flat_param = flat_dlg.result
+            flat_dlg.Destroy()
+            if flat_param:
+                flat_output = Path(tempfile.mkdtemp(dir=output_path))
+                flat_input = [calib_file]
+                flat_input.extend(pgm_files)
+                flat.apply(flat_param, flat_input, flat_output)
+                calib_out = flat_output / calib_file.name
+                pgm_out = [flat_output / f.name for f in pgm_files]
+                util.remove_dir_recursively(calib_file.parent)
             else:
-                progress.destroy()
-                mb.showinfo(master=self, message=str(event.client_data))
-                self.destroy()
-                return
-        if bg_exec.is_alive():
+                calib_out = calib_file
+                pgm_out = pgm_files
+            self.completion_callback = None
+            self.auto_hide = False
 
-            def check_progress():
-                self._check_progress(bg_exec, status_queue, progress)
+            reduce1d_params = (calib_out, pgm_out, output_path, cfg_name)
+            self.run_task(100, self._reduce_1d, reduce1d_params)
 
-            self._master.after(100, check_progress)
+        flat_dlg.Bind(wx.EVT_SHOW, on_flat_hide)
+        flat_dlg.Show()
+
+    def _reduce_1d(self, calib_file: Path, pgm_files: Sequence[Path], output_path: Path,
+                   cfg_name:str, budget: int = 100, start_with: int = 0):
+        progress = start_with
+        self.send_progress(progress, 'Applying slant correction...')
+        slt = Slant(calib_file)
+        slt_output = Path(tempfile.mkdtemp(dir=output_path))
+        slt_input = [calib_file]
+        slt_input.extend(pgm_files)
+        slt_budget = int(budget / 10)
+        slt.apply(slt_input, slt_output)
+        util.remove_dir_recursively(calib_file.parent)
+        if self.cancel_flag.is_set():
+            util.remove_dir_recursively(slt_output)
+            return
+        progress += slt_budget
+        ext_budget = budget - 2 * slt_budget
+        ex_o_input = [slt_output / f.name for f in pgm_files]
+        d_lo, d_hi = ex_optimal(ex_o_input, cfg_name, output_path, self.send_progress,
+                                ext_budget, progress)
+        if not self.cancel_flag.is_set():
+            calib_slt_corrected = slt_output / calib_file.name
+            ex_simple(calib_slt_corrected, (d_lo, d_hi), output_path)
+            simple_path = output_path / 'simple'
+            simple_path.mkdir(exist_ok=True)
+            ex_simple(ex_o_input, (d_lo, d_hi), simple_path)
+        util.remove_dir_recursively(slt_output)
+        if not self.cancel_flag.is_set():
+            self.send_progress(start_with + budget, 'Data reduction complete.')
+
+
+if __name__ == '__main__':
+    app = wx.App()
+    app.SetAppName('spectra')
+    frame = wx.Frame(None, title='Reduce Test')
+    pnl = wx.Panel(frame)
+    id_ref = wx.NewIdRef()
+    button = wx.Button(pnl, id=id_ref.GetId(), label='Run')
+    sizer = wx.BoxSizer(wx.VERTICAL)
+    sizer.Add(button, 0, 0, 0)
+    pnl.SetSizer(sizer)
+    pnl.Fit()
+    pnl_sz = pnl.GetBestSize()
+    frame.SetClientSize(pnl_sz)
+
+    # noinspection PyUnusedLocal
+    def _on_btn(event):
+        button.Disable()
+        dlg = Reduce(frame)
+
+        def on_dlg_show(evt: wx.ShowEvent):
+            if not evt.IsShown():
+                dlg.Destroy()
+                button.Enable()
+
+        dlg.Bind(wx.EVT_SHOW, on_dlg_show)
+        dlg.Show()
+
+    frame.Bind(wx.EVT_BUTTON, _on_btn, id=id_ref.GetId())
+    frame.Show()
+    app.MainLoop()

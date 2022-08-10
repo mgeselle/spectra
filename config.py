@@ -97,6 +97,7 @@ class Config:
         try:
             self._lock.acquire()
             self._config.Write('/Global/LastDir', str(last_dir))
+            self._config.Flush()
         finally:
             if self._lock.locked():
                 self._lock.release()

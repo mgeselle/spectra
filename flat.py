@@ -1,74 +1,50 @@
 from astropy.io import fits
+from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
-from os import PathLike
 from pathlib import Path
 from scipy.interpolate import CubicSpline
-import tkinter as tk
-import tkinter.ttk as ttk
-from typing import Union, Any, Tuple, Iterable
+from typing import Union, Any, Tuple, Sequence
+import wx
 from specview import Specview
-from tkutil import center_on_parent
 
 
-def _find_shortest_black(row_or_col: npt.NDArray[Any]) -> Tuple[int, int]:
-    if row_or_col[0] != 0:
-        return 0, 0
-    i_low = 0
-    for i in range(0, row_or_col.shape[0]):
-        if row_or_col[i] != 0:
-            i_low = i
-            break
-    i_hi = row_or_col.shape[0]
-    for i in range(row_or_col.shape[0] - 1, 0, -1):
-        if row_or_col[i] != 0:
-            i_hi = i
-            break
-
-    if row_or_col.shape[0] - i_hi < i_low:
-        return row_or_col.shape[0] - i_hi, i_hi
-
-    return i_low, row_or_col.shape[0] - i_low
+@dataclass(frozen=True)
+class FlatParam:
+    flat: npt.NDArray[Any]
+    x_lo: int
+    y_lo: int
+    x_hi: int
+    y_hi: int
 
 
-class Flat(tk.Toplevel):
-    def __init__(self, master: Union[tk.Tk, tk.Toplevel], input_dir: Union[str, bytes, PathLike], flat_basename: str):
-        super().__init__(master)
-        dpi = master.winfo_fpixels('1i')
-        w = int(5 * dpi) + 10
-        h = int(4 * dpi) + 50
-        self.configure(width=w, height=h)
+class FlatDialog(wx.Dialog):
+    def __init__(self, parent: wx.Window, flat_file: Path, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.SetTitle('Flat Spectrum')
 
-        top = ttk.Frame(self, relief=tk.RAISED)
-        top.pack(side=tk.TOP, fill=tk.BOTH)
-        self._specview = Specview(top)
-        self._specview.pack(side=tk.TOP, fill=tk.BOTH, padx=10, pady=10)
+        self._specview = Specview(self)
+        self._btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(self._specview, 1, wx.ALL | wx.EXPAND, border=10)
+        vbox.Add(self._btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
 
-        bottom = ttk.Frame(self, relief=tk.RAISED)
-        bottom.pack(side=tk.TOP, fill=tk.X)
-        self._status = tk.IntVar()
-        self._status.set(0)
-        ok_button = ttk.Button(bottom, text='OK', command=lambda: self._status.set(1))
-        ok_button.pack(side=tk.LEFT, expand=True, pady=20)
-        cancel_button = ttk.Button(bottom, text='Cancel', command=lambda: self._status.set(2))
-        cancel_button.pack(side=tk.LEFT, expand=True, pady=20)
+        self.SetSizer(vbox)
+        vbox.SetSizeHints(self)
+        self.Fit()
 
-        center_on_parent(master, self)
-        self.resizable(width=True, height=False)
+        self.Bind(wx.EVT_BUTTON, self._on_btn, id=wx.ID_OK)
+        self.Bind(wx.EVT_BUTTON, self._on_btn, id=wx.ID_CANCEL)
 
-        flat_file = None
-        self._input_path = Path(input_dir)
-        for candidate in sorted(self._input_path.glob(flat_basename + '*.*')):
-            if candidate.is_file() and candidate.suffix in ('.fits', '.fit'):
-                flat_file = candidate
-                break
-        if flat_file is None:
-            raise FileNotFoundError(f'Flat frame {flat_basename} not found in {input_dir}')
+        self._result = None
+
         flat_hdu_l = fits.open(flat_file)
         data = flat_hdu_l[0].data
-        self._x_lo, self._x_hi = _find_shortest_black(data[0, :])
-        self._y_lo, self._y_hi = _find_shortest_black(data[:, 0])
+        self._x_lo, self._x_hi = FlatDialog._find_shortest_black(data[0, :])
+        self._y_lo, self._y_hi = FlatDialog._find_shortest_black(data[:, 0])
         self._cropped_data = data[self._y_lo:self._y_hi, self._x_lo:self._x_hi]
+        flat_hdu_l.close()
+
         self._summed = self._cropped_data.sum(axis=0)
         self._specview.add_spectrum(self._summed)
         self._pick_xdata = np.array([0, self._summed.shape[0] - 1])
@@ -80,24 +56,24 @@ class Flat(tk.Toplevel):
         # noinspection PyTypeChecker
         self._spline = self._specview.add_spectrum(spline_y, fmt='--m')
 
-        self.wait_variable(self._status)
-        self.wm_withdraw()
-        if self._status.get() == 2:
-            self._flat = self._cropped_data / self._cropped_data
-        else:
-            self._flat = np.empty(self._cropped_data.shape)
+    def _on_btn(self, evt: wx.CommandEvent):
+        if evt.GetId() == wx.ID_OK:
+            flat = np.empty(self._cropped_data.shape)
             for i in range(0, self._cropped_data.shape[0]):
                 cs_y = []
                 for cs_x in self._pick_xdata:
                     cs_y.append(self._cropped_data[i, cs_x])
                 cs = CubicSpline(self._pick_xdata, np.array(cs_y))
                 sp_flat = np.fromfunction(cs, self._summed.shape)
-                self._flat[i, :] = sp_flat
-            self._flat = self._cropped_data / self._flat
-        flat_hdu_l.close()
-        self._cropped_data = None
-        self._summed = None
-        self._pick_xdata = None
+                flat[i, :] = sp_flat
+            flat = self._cropped_data / flat
+            self._result = FlatParam(flat, self._x_lo, self._y_lo, self._x_hi, self._y_hi)
+            if self.IsModal():
+                self.EndModal(wx.OK)
+        if self.IsModal():
+            self.EndModal(wx.CANCEL)
+        else:
+            self.Show(False)
 
     def _on_pick(self, x_picked, is_delete):
         if is_delete:
@@ -126,43 +102,77 @@ class Flat(tk.Toplevel):
         # noinspection PyTypeChecker
         self._specview.set_spectrum_data(self._spline, spline_y)
 
-    def apply(self, basenames: Iterable[str], output_dir: Union[str, bytes, PathLike] = None,
-              prefix: str = 'flt-'):
-        if output_dir is None:
-            output_path = self._input_path
-        else:
-            output_path = Path(output_dir)
+    @staticmethod
+    def _find_shortest_black(row_or_col: npt.NDArray[Any]) -> Tuple[int, int]:
+        if row_or_col[0] != 0:
+            return 0, 0
+        i_low = 0
+        for i in range(0, row_or_col.shape[0]):
+            if row_or_col[i] != 0:
+                i_low = i
+                break
+        i_hi = row_or_col.shape[0]
+        for i in range(row_or_col.shape[0] - 1, 0, -1):
+            if row_or_col[i] != 0:
+                i_hi = i
+                break
 
-        for candidate in self._input_path.iterdir():
-            if not candidate.is_file() or candidate.suffix not in ('.fits', '.fit'):
-                continue
-            for basename in basenames:
-                if candidate.name.startswith(basename):
-                    in_hdu_l = fits.open(candidate)
-                    header = in_hdu_l[0].header
-                    data = in_hdu_l[0].data
-                    out_data = data[self._y_lo:self._y_hi, self._x_lo:self._x_hi]
-                    out_data = out_data / self._flat
-                    in_hdu_l.close()
-                    out_hdu = fits.PrimaryHDU(out_data, header)
-                    out_hdu.writeto(output_path / (prefix + candidate.name), overwrite=True)
-                    break
+        if row_or_col.shape[0] - i_hi < i_low:
+            return row_or_col.shape[0] - i_hi, i_hi
+
+        return i_low, row_or_col.shape[0] - i_low
+
+    @property
+    def result(self):
+        return self._result
+
+
+def apply(param: FlatParam, input_files: Union[Path, Sequence[Path]], output_path: Path):
+    if isinstance(input_files, Path):
+        input_files = (input_files, )
+
+    for input_file in input_files:
+        in_hdu_l = fits.open(input_file)
+        header = in_hdu_l[0].header
+        data = in_hdu_l[0].data
+        out_data = data[param.y_lo:param.y_hi, param.x_lo:param.x_hi]
+        out_data = out_data / param.flat
+        in_hdu_l.close()
+        out_hdu = fits.PrimaryHDU(out_data, header)
+        out_hdu.writeto(output_path / input_file.name, overwrite=True)
 
 
 if __name__ == '__main__':
-    main = tk.Tk()
-    main.wm_title("Spectra")
-    main.eval('tk::PlaceWindow . center')
+    app = wx.App()
+    frame = wx.Frame(None, title='Combine Test')
+    pnl = wx.Panel(frame)
+    id_ref = wx.NewIdRef()
+    button = wx.Button(pnl, id=id_ref.GetId(), label='Run')
+    sizer = wx.BoxSizer(wx.VERTICAL)
+    sizer.Add(button, 0, 0, 0)
+    pnl.SetSizer(sizer)
+    pnl.Fit()
+    pnl_sz = pnl.GetBestSize()
+    frame.SetClientSize(pnl_sz)
 
-    def run_flat():
-        flt = Flat(main, '/home/mgeselle/astrowrk/spectra/dark', 'rot-drk-flat')
-        flt.apply(('rot-drk-flat'))
+    # noinspection PyUnusedLocal
+    def _on_btn(event):
+        button.Disable()
+        in_dir = Path.home() / 'astrowrk/spectra/dark'
+        flat_file = next(f for f in in_dir.glob('rot-drk-flat*.*'))
+        dlg = FlatDialog(frame, flat_file)
 
-    button = ttk.Button(text='Flat', command=run_flat)
-    button.pack(expand=True)
+        def on_dlg_show(evt: wx.ShowEvent):
+            if not evt.IsShown():
+                flat_param = dlg.result
+                dlg.Destroy()
+                button.Enable()
+                if flat_param:
+                    print(flat_param)
 
-    tk.mainloop()
+        dlg.Bind(wx.EVT_SHOW, on_dlg_show)
+        dlg.Show()
 
-
-
-
+    frame.Bind(wx.EVT_BUTTON, _on_btn, id=id_ref.GetId())
+    frame.Show()
+    app.MainLoop()

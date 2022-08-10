@@ -1,5 +1,4 @@
 from math import floor, ceil
-from os import PathLike
 from pathlib import Path
 from typing import Union, SupportsInt, SupportsFloat, Iterable, Any
 
@@ -34,18 +33,8 @@ def _move_row(in_row: npt.NDArray[Any], offset: float, x_0: int, out_row: npt.ND
 
 
 class Slant:
-    def __init__(self, input_dir: [str, bytes, PathLike], calib_basename: str):
-        self._input_path = Path(input_dir)
-        if not self._input_path.exists():
-            raise FileNotFoundError(f"Input directory '{self._input_path}' doesn't exist")
-        self._calib = None
-        for candidate in self._input_path.glob(calib_basename + '*.*'):
-            if candidate.suffix in ('.fits', '.fit'):
-                self._calib = candidate
-                break
-        if self._calib is None:
-            raise FileNotFoundError(f"Calibration file '{calib_basename}*.*' not found")
-        in_hdu_l = fits.open(self._calib)
+    def __init__(self, calib: Path):
+        in_hdu_l = fits.open(calib)
         data = in_hdu_l[0].data
         y_cent = int(data.shape[0] / 2)
         x_cent = int(data.shape[1] / 2)
@@ -71,21 +60,9 @@ class Slant:
 
         in_hdu_l.close()
 
-    def apply(self, basenames: Iterable[str], output_dir: Union[str, bytes, PathLike] = None, prefix: str = ''):
-        if output_dir is None:
-            output_path = self._input_path
-        else:
-            output_path = Path(output_dir)
+    def apply(self, input_files: Iterable[Path], output_path: Path):
         if not output_path.exists():
             raise FileNotFoundError("Output directory doesn't exist")
-        input_files = []
-        for candidate in self._input_path.iterdir():
-            if not candidate.is_file() or candidate.suffix not in ('.fits', '.fit'):
-                continue
-            for basename in basenames:
-                if candidate.name.startswith(basename):
-                    input_files.append(candidate)
-                    break
         for input_file in input_files:
             in_hdu_l = fits.open(input_file)
             header = in_hdu_l[0].header
@@ -96,10 +73,14 @@ class Slant:
                 offset = self._fit(y)
                 _move_row(data[y, :], offset, self._x_0, new_data[y, :])
             out_hdu = fits.PrimaryHDU(new_data, header)
-            out_hdu.writeto(output_path / (prefix + input_file.name), overwrite=True)
+            out_hdu.writeto(output_path / input_file.name, overwrite=True)
             in_hdu_l.close()
 
 
 if __name__ == '__main__':
-    slt = Slant('/home/mgeselle/astrowrk/spectra/reduced', 'flt-rot-drk-Neon')
-    slt.apply(('flt-rot-drk-Neon',), prefix='slt-')
+    in_dir = Path.home() / 'astrowrk/spectra/reduced'
+    out_dir = in_dir.parent / 'slant'
+    out_dir.mkdir(exist_ok=True)
+    in_file = next(f for f in in_dir.glob('flt-rot-drk-Neon*.*'))
+    slt = Slant(in_file)
+    slt.apply([in_file], out_dir)

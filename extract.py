@@ -3,38 +3,32 @@ import numpy as np
 import numpy.ma as ma
 from numpy.polynomial import Polynomial
 import numpy.typing as npt
-from os import PathLike
 from pathlib import Path
 from time import time
 from typing import Union, Tuple, Sequence, Any, Callable
 from config import Config, CameraConfig
-from util import find_input_files
 
 import tkinter as tk
 from specview import Specview
 
 
-def simple(input_dir: Union[str, bytes, PathLike], input_basename: str,
+def simple(input_files: Union[Path, Sequence[Path]],
            limits: Union[Tuple[int, int],  Sequence[int]],
-           output_dir: Union[None, str, bytes, PathLike] = None, prefix=''):
-    input_files = find_input_files(input_dir, input_basename)
+           output_path: Path):
     headers = []
+    if isinstance(input_files, Path):
+        input_files = [input_files]
+    out_name = _get_common_name(input_files, 'simple-1d')
     out_data = None
     for i in range(len(input_files)):
         spectrum, header = simple_single(input_files[i], limits)
         headers.append(header)
         if out_data is None:
-            out_data = np.empty((len(input_files), spectrum.shape[1]), dtype=np.float32)
+            out_data = np.empty((len(input_files), spectrum.shape[0]), dtype=np.float32)
         out_data[i] = spectrum[:]
     out_spectrum = np.mean(out_data, axis=0)
-    out_name = prefix + input_basename
-    if not out_name.endswith('.fits') and not out_name.endswith('.fit'):
-        out_name = out_name + input_files[0].suffix
     out_hdu = fits.PrimaryHDU(out_spectrum, headers[0])
-    if output_dir is None:
-        output_file = input_files[0].parent / out_name
-    else:
-        output_file = Path(output_dir) / out_name
+    output_file = output_path / out_name
     out_hdu.writeto(output_file, overwrite=True)
 
 
@@ -52,19 +46,24 @@ def simple_single(input_file: Path, limits: Union[Tuple[int, int],  Sequence[int
     return spectrum, header
 
 
-def optimal(input_dir: Union[str, bytes, PathLike], input_basename: str,
-            config_name: str, output_dir: Union[None, str, bytes, PathLike] = None, prefix='',
-            callback: Union[None, Callable[[str], None]] = None) -> Tuple[int, int]:
-    input_files = find_input_files(input_dir, input_basename)
+def optimal(input_files: Union[Path, Sequence[Path]],
+            config_name: str, output_path: Path,
+            callback: Union[None, Callable[[int, str], bool]] = None,
+            budget=100, start_with=0) -> Union[Tuple[int, int], Tuple[None, None]]:
+    if isinstance(input_files, Path):
+        input_files = [input_files]
     cam_cfg = Config.get().get_camera_config(config_name)
     headers = []
     out_data = None
     d_low = None
     d_high = None
+    progress = start_with
+    prog_step = int(budget / len(input_files))
     for i in range(len(input_files)):
         if callback is not None:
-            msg = f'Extracting spectrum from {input_files[i]}.'
-            callback(msg)
+            msg = f'Extracting spectrum from {input_files[i].name}.'
+            if callback(progress, msg):
+                return None, None
         in_hdu_l = fits.open(input_files[i])
         data = in_hdu_l[0].data
         headers.append(in_hdu_l[0].header)
@@ -72,50 +71,76 @@ def optimal(input_dir: Union[str, bytes, PathLike], input_basename: str,
             out_data = np.empty((len(input_files), data.shape[1]))
             d_low = data.shape[0]
             d_high = 0
-        spectrum, n_d_low, n_d_high = _optimal(data, cam_cfg, callback)
+        spectrum, n_d_low, n_d_high = _optimal(data, cam_cfg, callback, prog_step, progress)
         in_hdu_l.close()
+        if spectrum is None:
+            return None, None
         out_data[i] = spectrum[:]
         if n_d_low < d_low:
             d_low = n_d_low
         if n_d_high > d_high:
             d_high = n_d_high
+        progress += prog_step
 
     out_spectrum = np.mean(out_data, axis=0)
-    out_name = prefix + input_basename
-    if not out_name.endswith('.fits') and not out_name.endswith('.fit'):
-        out_name = out_name + input_files[0].suffix
+    out_name = _get_common_name(input_files, 'optimal-1d')
     out_hdu = fits.PrimaryHDU(out_spectrum, headers[0])
-    if output_dir is None:
-        output_file = input_files[0].parent / out_name
-    else:
-        output_file = Path(output_dir) / out_name
+    output_file = output_path / out_name
     out_hdu.writeto(output_file, overwrite=True)
     return d_low, d_high
 
 
+def _get_common_name(files: Sequence[Path], default_name: str) -> Union[str, None]:
+    if len(files) == 1:
+        return files[0].name
+
+    min_len = min(len(files[0].stem), len(files[1].stem))
+    common_idx = 0
+    for common_idx in range(0, min_len + 1):
+        if files[0].stem[common_idx] != files[1].stem[common_idx]:
+            break
+    if common_idx == 0:
+        out_name = default_name
+    else:
+        out_name = files[0].stem[0:common_idx]
+    return out_name + files[0].suffix
+
+
 def _optimal(data: npt.NDArray[Any], cam_cfg: CameraConfig,
-             callback: Union[None, Callable[[str], None]]) -> Tuple[npt.NDArray[Any], int, int]:
+             callback: Union[None, Callable[[int, str], bool]],
+             start_with: int, budget: int) -> Union[Tuple[npt.NDArray[Any], int, int], Tuple[None, None, None]]:
+    progress = start_with
+    prog_step = int(budget / 4)
     before = time()
     d_low, d_high, sky_low, sky_high = _find_sky_and_signal(data)
-    if callback is not None:
+    progress += prog_step
+    if callback:
         elapsed = time() - before
         msg = f'Detected signal in {elapsed:5.3f}s. Signal: {d_low}..{d_high}, sky: 0..{sky_low}, {sky_high}..'
-        callback(msg)
+        if callback(progress, msg):
+            return None, None, None
 
     before = time()
     var_img = np.abs(data) / cam_cfg.gain + (cam_cfg.ron / cam_cfg.gain)**2
-    if callback is not None:
+    if callback:
         elapsed = (time() - before) * 1000
         msg = f'Created initial variance image in {elapsed:7.3f}ms.'
-        callback(msg)
+        if callback(progress, msg):
+            return None, None, None
     before = time()
     sky_img = _create_sky_image(data, sky_low, sky_high, var_img)
-    if callback is not None:
+    progress += prog_step
+    if callback:
         elapsed = time() - before
         msg = f'Created sky image in {elapsed:5.3f}s.'
-        callback(msg)
+        if callback(progress, msg):
+            return None, None, None
     net_img = data - sky_img
-    return _extract_spectrum(net_img, sky_img, var_img, d_low, d_high, cam_cfg, callback), d_low, d_high
+    spectrum = _extract_spectrum(net_img, sky_img, var_img, d_low, d_high, cam_cfg, callback,
+                                 budget=budget - (progress - start_with), start_with=progress)
+    if spectrum is None:
+        return None, None, None
+    return spectrum, d_low, d_high
 
 
 def _find_sky_and_signal(data: npt.NDArray[Any]) -> Tuple[int, int, int, int]:
@@ -194,10 +219,13 @@ def _create_sky_image(data: npt.NDArray[Any], sky_low: int, sky_high: int,
 
 def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_img: npt.NDArray[Any],
                       d_low: int, d_high: int, cam_cfg: CameraConfig,
-                      callback: Union[None, Callable[[str], None]]) -> npt.NDArray[Any]:
+                      callback: Union[None, Callable[[int, str], bool]],
+                      budget: int, start_with: int) -> Union[npt.NDArray[Any], None]:
     start = time()
-    if callback is not None:
-        callback('Extracting spectrum...')
+    prog_step = int(budget / 2)
+    if callback:
+        if callback(start_with, 'Extracting spectrum...'):
+            return None
     n_img = ma.asarray(net_img[d_low:d_high, :])
     f_lam = np.sum(n_img, axis=0)
     f_lam_sq = f_lam**2
@@ -239,14 +267,16 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
             pixel_rejected = True
             for y, x in zip(rej_idx[0], rej_idx[1]):
                 p_x_lam[y, x] = ma.masked
-    if callback is not None:
+    if callback:
         elapsed = time() - start
-        callback(f'Computed profile in {elapsed:5.3f}s.')
+        if callback(start_with + prog_step, f'Computed profile in {elapsed:5.3f}s.'):
+            return None
 
     # Reject cosmic ray hits
     start = time()
     pixel_rejected = True
     variance = None
+
     while pixel_rejected:
         p_lam_norm = p_lam / p_sum
         enumerator = ma.sum((p_lam_norm * n_img) / v_img, axis=0)
@@ -256,13 +286,14 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
         v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
         residual = (n_img - f_by_p)**2 / v_img
         pixel_rejected = False
-        rej_idx = np.nonzero(residual > 25)
+        residual.mask = p_lam.mask
+        rej_idx = np.nonzero(residual > 55)
         max_res = None
         x_max = None
         y_max = None
         for y, x in zip(rej_idx[0], rej_idx[1]):
             res = residual[y, x]
-            if max_res is None or res > max_res:
+            if max_res is None or (res > max_res and n_img[y, x] > f_by_p[y, x]):
                 max_res = res
                 y_max = y
                 x_max = x
@@ -274,12 +305,13 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
             v_img[y_max, x_max] = ma.masked
             s_img[y_max, x_max] = ma.masked
 
-    if callback is not None:
+    if callback:
         elapsed = time() - start
         sigma = ma.sqrt(variance)
         snr = f_lam / sigma
         min_snr = ma.min(snr)
-        callback(f'Rejected cosmic ray hits in {elapsed:5.3f}s. SNR >= {min_snr:6.0f}.')
+        if callback(start_with + budget, f'Rejected cosmic ray hits in {elapsed:5.3f}s. SNR >= {min_snr:6.0f}.'):
+            return None
     return np.asarray(f_lam)
 
 

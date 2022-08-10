@@ -1,11 +1,8 @@
 from pathlib import Path
-from typing import Union
+import re
+from typing import Union, Sequence
 import wx
-import wx.lib.newevent as ne
 from config import Config
-
-
-CompletionEvent, EVT_SP_COMPLETE = ne.NewEvent()
 
 
 def size_text_by_chars(tc: Union[wx.TextCtrl, wx.ComboBox], num_chars: int):
@@ -41,3 +38,84 @@ def select_file(parent: wx.Window) -> Union[None, str]:
         Config.get().set_last_directory(result_path.parent)
         return result
 
+
+def ensure_dir_exists(the_dir: str, role: str, parent: wx.Window) -> Union[Path, None]:
+    """Ensure that a directory exists and show a message box if it doesn't.
+
+    :param str the_dir: directory to check
+    :param str role: directory role. Used for the message in the message box
+    :param parent: parent window for the message box
+    :return None | Path: returns a Path object, if the directory exists, None otherwise
+    """
+    path = Path(the_dir.replace('~', str(Path.home())))
+    if path.exists():
+        return path
+
+    with wx.MessageDialog(parent, f"{role.capitalize()} directory doesn't exist.", caption='Missing Directory',
+                          style=wx.OK | wx.ICON_ERROR) as dlg:
+        dlg.ShowModal()
+    return None
+
+
+def create_dir(the_dir: str, role: str, parent: wx.Window) -> Union[Path, None]:
+    """Creates a directory if it doesn't exist and shows a message box, if creation fails
+
+    :param str the_dir: directory to create
+    :param str role: directory role. Used for the message in the message box
+    :param parent: parent window for the message box
+    :return None | Path: returns a Path object, if the directory exists, None otherwise
+    """
+    path = Path(the_dir.replace('~', str(Path.home())))
+    if path.exists():
+        return path
+
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except PermissionError as err:
+        with wx.MessageDialog(parent, f'Error creating {role} directory: {err}',
+                              caption='Error Creating', style=wx.OK | wx.ICON_ERROR) as dlg:
+            dlg.ShowModal()
+            return None
+
+    return path
+
+
+def find_files_by_pattern(dir_path: Path, pattern: str, role: str, parent: wx.Window,
+                          must_exist: bool = True, unique: bool = False,
+                          extensions=('.fit', '.fits')) -> Union[None | Path | Sequence[Path]]:
+    if unique:
+        file_word = 'file'
+    else:
+        file_word = 'files'
+    if not dir_path.exists():
+        with wx.MessageDialog(parent, f"Directory for {role} {file_word} doesn't exist.",
+                              caption='Missing Directory',
+                              style=wx.OK | wx.ICON_ERROR) as dlg:
+            dlg.ShowModal()
+            return None
+    match_pattern = pattern
+    suffix_re = ')|('.join(extensions)
+    suffix_re.replace('.', '[.]')
+    suffix_re = '.*((' + suffix_re + '))$'
+    if not re.fullmatch(suffix_re, match_pattern) and not match_pattern.endswith('.*'):
+        match_pattern = match_pattern + '.*'
+    matches = [f for f in dir_path.glob(match_pattern) if f.suffix in extensions]
+    if not matches and must_exist:
+        with wx.MessageDialog(parent, f"Pattern for {role} {file_word} doesn't match anything.",
+                              caption='No Match',
+                              style=wx.OK | wx.ICON_ERROR) as dlg:
+            dlg.ShowModal()
+            return None
+    if unique and len(matches) > 1:
+        with wx.MessageDialog(parent, f"Pattern for {role} {file_word} isn't unique.",
+                              caption='Not Unique',
+                              style=wx.OK | wx.ICON_ERROR) as dlg:
+            dlg.ShowModal()
+            return None
+    if unique:
+        if matches:
+            return matches[0]
+        else:
+            return None
+    else:
+        return matches
