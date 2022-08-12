@@ -1,15 +1,14 @@
-from astropy.io import fits
-import numpy as np
-import numpy.ma as ma
-from numpy.polynomial import Polynomial
-import numpy.typing as npt
 from pathlib import Path
 from time import time
 from typing import Union, Tuple, Sequence, Any, Callable
-from config import Config, CameraConfig
 
-import tkinter as tk
-from specview import Specview
+import numpy as np
+import numpy.ma as ma
+import numpy.typing as npt
+from astropy.io import fits
+from numpy.polynomial import Polynomial
+
+from config import Config, CameraConfig
 
 
 def simple(input_files: Union[Path, Sequence[Path]],
@@ -312,27 +311,3 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
         if callback(start_with + budget, f'Rejected cosmic ray hits in {elapsed:5.3f}s. SNR >= {min_snr:6.0f}.'):
             return None
     return np.asarray(f_lam)
-
-
-if __name__ == '__main__':
-    g_input_dir = '/home/mgeselle/astrowrk/spectra/reduced'
-    # g_input_basename = 'slt-flt-rot-drk-Neon_Castor_001.fits'
-    g_input_basename = 'slt-flt-rot-drk-Castor'
-    # g_limits = (390, 430)
-    # g_prefix = 'c1d-'
-    g_prefix = 'p1d-'
-    # simple(g_input_dir, g_input_basename, g_limits, prefix=g_prefix)
-    optimal(g_input_dir, g_input_basename, 'ST10XME', prefix=g_prefix, callback=print)
-
-    main = tk.Tk()
-    sv = Specview(main, width=1200, height=1100)
-    sv.pack(side=tk.TOP, fill=tk.BOTH)
-
-    g_in_hdu_l = fits.open(g_input_dir + '/' + g_prefix + g_input_basename + '.fits')
-    g_data = g_in_hdu_l[0].data
-    sv.add_spectrum(g_data)
-
-    main.eval('tk::PlaceWindow . center')
-    tk.mainloop()
-
-
