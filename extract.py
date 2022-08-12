@@ -252,7 +252,7 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
                 x_val_fit = x_val[~p_slice.mask]
                 p_x_fit = p_slice[~p_slice.mask]
                 w_fit = w_slice[~p_slice.mask]
-            poly = Polynomial.fit(x_val_fit, p_x_fit, deg=30, w=w_fit)
+            poly = Polynomial.fit(x_val_fit, p_x_fit, deg=10, w=w_fit)
             # noinspection PyCallingNonCallable
             p_lam[i, :] = poly(x_val)
         p_lam[p_lam < 0] = 0
@@ -277,8 +277,8 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
     pixel_rejected = True
     variance = None
 
+    p_lam_norm = p_lam / p_sum
     while pixel_rejected:
-        p_lam_norm = p_lam / p_sum
         enumerator = ma.sum((p_lam_norm * n_img) / v_img, axis=0)
         variance = ma.sum(p_lam_norm**2 / v_img, axis=0)
         f_lam = enumerator / variance
@@ -287,7 +287,7 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
         residual = (n_img - f_by_p)**2 / v_img
         pixel_rejected = False
         residual.mask = p_lam.mask
-        rej_idx = np.nonzero(residual > 55)
+        rej_idx = ma.nonzero(residual > 25)
         max_res = None
         x_max = None
         y_max = None
@@ -300,7 +300,6 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
         if max_res is not None:
             pixel_rejected = True
             p_lam[y_max, x_max] = ma.masked
-            p_sum = ma.sum(p_lam, axis=0)
             n_img[y_max, x_max] = ma.masked
             v_img[y_max, x_max] = ma.masked
             s_img[y_max, x_max] = ma.masked
