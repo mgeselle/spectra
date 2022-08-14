@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import wx
 
+from calib import CalibConfigurator
 from combine import Combine
 from configgui import CamCfgGUI
 from crop import Crop
@@ -17,6 +18,7 @@ ID_COMBINE = wx.NewIdRef()
 ID_CROP = wx.NewIdRef()
 ID_REDUCE = wx.NewIdRef()
 ID_CFG_CAMERA = wx.NewIdRef()
+ID_CFG_CALIB = wx.NewIdRef()
 
 
 class Main(wx.Frame):
@@ -40,6 +42,7 @@ class Main(wx.Frame):
 
         self._config_menu = wx.Menu()
         camera_item = self._config_menu.Append(ID_CFG_CAMERA.GetId(), '&Camera')
+        calib_cfg_item = self._config_menu.Append(ID_CFG_CALIB.GetId(), 'C&alibration')
         menubar.Append(self._config_menu, '&Configuration')
 
         self.SetMenuBar(menubar)
@@ -61,6 +64,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Crop(self)), crop_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Reduce(self)), reduce_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CalibConfigurator(self)), calib_cfg_item)
 
         display = wx.Display()
         display_sz = display.GetClientArea()

@@ -1,22 +1,17 @@
 import astropy.units as u
 from astroquery.nist import Nist
-from dataclasses import dataclass
 from pathlib import Path
-import tkinter as tk
-import tkinter.filedialog as fd
-import tkinter.messagebox as mb
-import tkinter.ttk as ttk
+import threading
 from typing import Sequence, Union, Dict
-from config import config
-import tkutil
-from util import find_input_files
+import wx
+import wx.lib.newevent as ne
+import wx.lib.intctrl as wxli
+from config import Config
+from wxutil import size_text_by_chars
 
 
-@dataclass
-class CalibConfig:
-    calib: Path
-    input_files: Sequence[Path]
-    calib_lines: Sequence[Dict]
+ProgressEvent, EVT_ID_PROGRESS = ne.NewEvent()
+ErrorEvent, EVT_ID_ERROR = ne.NewEvent()
 
 
 def _retrieve_lines(name: str, lower: Union[None, int], higher: Union[None, int]) -> Union[None, Sequence[Dict]]:
@@ -25,10 +20,10 @@ def _retrieve_lines(name: str, lower: Union[None, int], higher: Union[None, int]
     try:
         result = []
         for line in lines:
-            line_src = config.get_calib_table(line)
+            line_src = Config.get().get_calib_table(line)
             if line_src is None:
                 line_src = Nist.query(3000 * u.AA, 8500 * u.AA, linename=line)
-                config.save_calib_table(line, line_src)
+                Config.get().save_calib_table(line, line_src)
             for row in line_src.iterrows('Observed', 'Rel.'):
                 try:
                     observed = row[0]
@@ -50,217 +45,196 @@ def _retrieve_lines(name: str, lower: Union[None, int], higher: Union[None, int]
         return None
 
 
-def _is_integer(action, key):
-    if action == '0':
-        return True
-    return key.isdigit()
-
-
-class CalibConfigurator(tk.Toplevel):
-    _last_input_dir = Path.home()
+class CalibConfigurator(wx.Dialog):
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
-        self.title('Calibration Configuration')
+        self.SetTitle('Calibration Configuration')
 
-        top = ttk.Frame(self, relief=tk.RAISED)
-        top.pack(side=tk.TOP, fill=tk.BOTH)
+        panel = wx.Panel(self)
+        ref_label = wx.StaticText(panel, wx.ID_ANY, 'Reference Spectra:')
+        self._ref_entry = wx.TextCtrl(panel)
+        size_text_by_chars(self._ref_entry, 20)
+        lambda_label = wx.StaticText(panel, wx.ID_ANY, u'\u03bb Range [\u00c5]:')
+        self._lam_low = wxli.IntCtrl(panel, min=3000, max=8500)
+        size_text_by_chars(self._lam_low, 6)
+        dash_label = wx.StaticText(panel, wx.ID_ANY, ' .. ')
+        self._lam_high = wxli.IntCtrl(panel, min=3000, max=8500)
+        size_text_by_chars(self._lam_high, 6)
+        lam_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        lam_sizer.Add(self._lam_low, 0, 0, 0)
+        lam_sizer.Add(dash_label, 1, 0, 0)
+        lam_sizer.Add(self._lam_high, 0, 0, 0)
 
-        entry_w = 40
-        x_pad = 10
-        y_pad = 10
+        grid = wx.FlexGridSizer(rows=2, cols=2, vgap=5, hgap=5)
+        grid.Add(ref_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._ref_entry, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(lambda_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(lam_sizer, 0, wx.ALIGN_LEFT, wx.ALIGN_CENTER_VERTICAL)
 
-        input_dir_label = ttk.Label(top, text='Input Directory:')
-        input_dir_label.grid(row=0, column=0, padx=(x_pad, x_pad),
-                             pady=(2*y_pad, 0), sticky=tk.W)
-        self._input_dir = tk.StringVar(top)
-        input_dir = ttk.Entry(top, width=entry_w, textvariable=self._input_dir,
-                              takefocus=True)
-        input_dir.grid(row=0, column=1, padx=(x_pad, x_pad),
-                       pady=(2*y_pad, 0), sticky=tk.W)
-        self._folder_icon = tkutil.load_icon(top, 'folder')
-        get_input_folder = ttk.Button(top, image=self._folder_icon,
-                                      command=self._get_input_dir)
-        get_input_folder.grid(row=0, column=2, padx=(0, x_pad),
-                              pady=(2*y_pad, 0), sticky=tk.W)
+        btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
 
-        calib_label = ttk.Label(top, text='Calibration:')
-        calib_label.grid(row=1, column=0, padx=(x_pad, x_pad),
-                         pady=(y_pad, 0), sticky=tk.W)
-        self._calib_basename = tk.StringVar(top)
-        calib_entry = ttk.Entry(top, width=entry_w, textvariable=self._calib_basename,
-                                takefocus=True)
-        calib_entry.grid(row=1, column=1, padx=(x_pad, x_pad),
-                         pady=(y_pad, 0), sticky=tk.W)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(grid, 0, wx.ALL, border=10)
+        vbox.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
+        panel.SetSizer(vbox)
+        panel.Fit()
+        self.SetClientSize(panel.GetBestSize())
 
-        pgm_label = ttk.Label(top, text='Program Basename:')
-        pgm_label.grid(row=2, column=0, padx=(x_pad, x_pad),
-                       pady=(y_pad, 0), sticky=tk.W)
-        self._pgm_basename = tk.StringVar(top)
-        pgm_entry = ttk.Entry(top, width=entry_w, textvariable=self._pgm_basename,
-                              takefocus=True)
-        pgm_entry.grid(row=2, column=1, padx=(x_pad, x_pad),
-                       pady=(y_pad, 0), sticky=tk.W)
+        self.Layout()
+        sz = self.GetBestSize()
+        self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
-        lines_label = ttk.Label(top, text='Calibration Lines:')
-        lines_label.grid(row=3, column=0, padx=(x_pad, x_pad),
-                         pady=(y_pad, 0), sticky=tk.W)
-        self._line_name = tk.StringVar(top)
-        line_names = config.get_calib_line_names()
-        if len(line_names) < 2:
-            line_name_ctl = ttk.Entry(top, width=entry_w, textvariable=self._line_name,
-                                      takefocus=True)
+        used_lines = Config.get().get_used_lines()
+        self._ref_entry.SetValue(used_lines)
+        lam_low, lam_hi = Config.get().get_line_limits()
+        self._lam_low.SetValue(lam_low)
+        self._lam_high.SetValue(lam_hi)
+
+        self.Bind(wx.EVT_BUTTON, self._on_btn)
+        self.Bind(EVT_ID_PROGRESS, self._on_progress)
+        self.Bind(EVT_ID_ERROR, self._on_error)
+
+        self._progress = None
+        self._error_msg = None
+        # This is used for synchronising between the event handlers.
+        # Apparently the there is some parallelism involved in handling events. This
+        # wreaks havoc with when exactly to destroy child dialogs.
+        self._event_ack = threading.Event()
+
+    def _on_btn(self, event: wx.CommandEvent):
+        if event.GetId() == wx.ID_CANCEL:
+            if self.IsModal():
+                self.EndModal(wx.CANCEL)
+            else:
+                self.Show(False)
+            return
+
+        ref_lines = [x.strip() for x in self._ref_entry.GetValue().split(',')]
+        if not ref_lines:
+            return
+        present_lines = Config.get().get_calib_line_names()
+
+        ref_missing = [x for x in ref_lines if x not in present_lines]
+
+        lam_lower = self._lam_low.GetValue()
+        lam_upper = self._lam_high.GetValue()
+        if lam_lower >= lam_upper:
+            return
+
+        Config.get().set_line_limits(lam_lower, lam_upper)
+
+        if not ref_missing:
+            Config.get().set_used_lines(','.join(ref_lines))
+            if self.IsModal():
+                self.EndModal(wx.OK)
+            else:
+                self.Show(False)
+            return
+
+        self._progress = wx.ProgressDialog('Reference Spectrum Retrieval', parent=self, maximum=100,
+                                           style=wx.PD_AUTO_HIDE, message='Retrieving missing reference spectra.')
+        self._progress_showing = True
+        self._progress.Bind(wx.EVT_SHOW, self._on_progress_close)
+
+        retrieval_args = (ref_lines, ref_missing)
+        thread = threading.Thread(target=self._retrieve_ref_spectra, args=retrieval_args)
+        thread.start()
+
+    def _retrieve_ref_spectra(self, full_list: Sequence[str], missing: Sequence[str]):
+        self._event_ack.clear()
+        step = int(100 / len(missing))
+        completion = 0
+        failed = []
+        for species in missing:
+            # noinspection PyBroadException
+            event = ProgressEvent(completion=completion, msg=f'Retrieving reference spectrum for {species}.')
+            self.QueueEvent(event)
+            self._event_ack.wait()
+            self._event_ack.clear()
+            try:
+                ref_spectrum = Nist.query(3000 * u.AA, 8500 * u.AA, linename=species)
+            except Exception:
+                failed.append(species)
+            else:
+                Config.get().save_calib_table(species, ref_spectrum)
+            completion += step
+
+        if failed:
+            msg=f'Failed to retrieve: {", ".join(failed)}.'
         else:
-            line_name_ctl = ttk.Combobox(top, width=entry_w, textvariable=self._line_name,
-                                         values=line_names, takefocus=True)
-        line_name_ctl.grid(row=3, column=1, padx=(x_pad, x_pad),
-                           pady=(y_pad, 0), sticky=tk.W)
+            Config.get().set_used_lines(','.join(full_list))
+            msg=''
+        event = ProgressEvent(completion=100, msg=msg)
+        self.QueueEvent(event)
 
-        val_reg = self.register(_is_integer)
-        val_cmd = (val_reg, '%d', '%S')
+    def _on_progress(self, event: ProgressEvent):
+        print(f'Entered _on_progress, completion = {event.completion}')
+        completion = event.completion
+        if completion == 100:
+            self._error_msg = event.msg
+        self._progress.Update(completion, event.msg)
+        self._event_ack.set()
+        print(f'Leaving _on_progress. Completion:{completion}, msg: {event.msg}')
 
-        range_label = ttk.Label(top, text='Range [' + u'\u00C5' + ']')
-        range_label.grid(row=4, column=0, padx=(x_pad, x_pad),
-                         pady=(y_pad, 2*y_pad), sticky=tk.W)
-        range_frame = ttk.Frame(top)
-        self._range_low = tk.StringVar(top)
-        self._range_high = tk.StringVar(top)
-        r_low_entry = ttk.Entry(range_frame, width=5, textvariable=self._range_low,
-                                takefocus=True, validate='key', validatecommand=val_cmd)
-        r_low_entry.pack(side=tk.LEFT)
-        r_spacer = ttk.Label(range_frame, text='-')
-        r_spacer.pack(side=tk.LEFT, padx=10)
-        r_high_entry = ttk.Entry(range_frame, width=5, textvariable=self._range_high,
-                                 takefocus=True, validate='key', validatecommand=val_cmd)
-        r_high_entry.pack(side=tk.LEFT)
-        range_frame.grid(row=4, column=1, padx=(x_pad, x_pad),
-                         pady=(y_pad, 2*y_pad), sticky=tk.W)
-
-        bottom = ttk.Frame(self, relief=tk.RAISED)
-        bottom.pack(side=tk.TOP, fill=tk.BOTH)
-
-        ok_button = ttk.Button(bottom, text='OK', command=self._on_ok)
-        ok_button.pack(pady=y_pad, expand=True, side=tk.LEFT)
-        cancel_button = ttk.Button(bottom, text='Cancel', command=self._on_cancel)
-        cancel_button.pack(pady=y_pad, expand=True, side=tk.LEFT)
-
-        tkutil.center_on_parent(parent, self)
-
-        self._status = tk.IntVar(bottom)
-        self._status.set(-1)
-        self._calib_config = None
-
-    def _get_input_dir(self) -> Union[str, None]:
-        initial_dir = CalibConfigurator._last_input_dir
-        raw_result = fd.askdirectory(parent=self, initialdir=initial_dir, mustexist=True)
-        if not raw_result:
+    def _on_progress_close(self, event: wx.ShowEvent):
+        if event.IsShown():
             return
-        CalibConfigurator._last_input_dir = Path(raw_result)
-        if raw_result.startswith(str(Path.home())):
-            raw_result = raw_result.replace(str(Path.home()), '~')
-        self._input_dir.set(raw_result)
-        return raw_result
-
-    def _on_ok(self):
-        raw_input_dir = self._input_dir.get()
-        if raw_input_dir is None or raw_input_dir.strip() == '':
-            return
-        calib_basename = self._calib_basename.get()
-        if calib_basename is None or calib_basename.strip() == '':
-            return
-        line_name = self._line_name.get()
-        if line_name is None or line_name.strip() == '':
-            return
-
-        self.wm_withdraw()
-        raw_input_dir = raw_input_dir.replace('~', str(Path.home()))
-        input_dir = Path(raw_input_dir)
-        if not input_dir.exists():
-            mb.showerror(title='Calibration Configuration', message='Input directory does not exist.',
-                         master=self)
-            self.wm_deiconify()
-            return
-
-        calib_file = find_input_files(input_dir, calib_basename)
-        if len(calib_file) == 0:
-            mb.showerror(title='Calibration Configuration', message='Calibration file does not exist.',
-                         master=self)
-            self.wm_deiconify()
-            return
-        elif len(calib_file) > 1:
-            mb.showerror(title='Calibration Configuration', message='Calibration file not unique.',
-                         master=self)
-            self.wm_deiconify()
-            return
-
-        # Allow empty program basename in order to cater for calibration of
-        # just a reference spectrum.
-        pgm_basename = self._pgm_basename.get()
-        if pgm_basename is None or pgm_basename.strip() == '':
-            pgm_files = tuple()
+        self._progress.Destroy()
+        self._progress = None
+        if not self._error_msg:
+            if self.IsModal():
+                self.EndModal(wx.OK)
+            else:
+                self.Show(False)
         else:
-            pgm_files = find_input_files(input_dir, pgm_basename)
-            if len(pgm_files) == 0:
-                mb.showerror(title='Calibration Configuration', message='Program file not found.',
-                             master=self)
-                self.wm_deiconify()
-                return
-        line_names = self._line_name.get()
-        raw_lower = self._range_low.get().strip()
-        if raw_lower != '':
-            lower = int(raw_lower)
-        else:
-            lower = None
-        raw_higher = self._range_high.get().strip()
-        if raw_higher != '':
-            higher = int(raw_higher)
-        else:
-            higher = None
-        if higher is not None and lower is not None and higher <= lower:
-            mb.showerror(title='Calibration Configuration', message='Higher range <= lower range.',
-                         master=self)
-            self.wm_deiconify()
-            return
+            self._event_ack.clear()
+            self.QueueEvent(ErrorEvent())
+            self._event_ack.set()
 
-        lines = _retrieve_lines(line_names, lower, higher)
-        if lines is None:
-            mb.showerror(title='Calibration Configuration', message='Error in calibration line name.',
-                         master=self)
-            self.wm_deiconify()
-            return
-        self._calib_config = CalibConfig(calib_file[0], pgm_files, lines)
-        self._status.set(1)
+        print('Leaving _on_close')
 
-    def _on_cancel(self):
-        self.wm_withdraw()
-        self._status.set(0)
-
-    def get_config(self) -> Union[None, CalibConfig]:
-        self.wait_variable(self._status)
-        if self._status.get():
-            result = self._calib_config
-        else:
-            result = None
-        self.destroy()
-        return result
-
-
-def _get_calibration_config(parent: Union[tk.Tk, tk.Toplevel]) -> Union[None, CalibConfig]:
-    configurator = CalibConfigurator(parent)
-    return configurator.get_config()
+    def _on_error(self, event: ErrorEvent):
+        self._event_ack.wait()
+        with wx.MessageDialog(self, self._error_msg, caption='Retrieval Errors',
+                              style=wx.OK | wx.CENTRE | wx.ICON_ERROR) as dlg:
+            dlg.ShowModal()
 
 
 if __name__ == '__main__':
-    main = tk.Tk()
-    main.eval('tk::PlaceWindow . center')
+    app = wx.App()
+    app.SetAppName('spectra')
+    frame = wx.Frame(None, title='Calibration Test')
+    pnl = wx.Panel(frame)
+    id_ref = wx.NewIdRef()
+    cfg_button = wx.Button(pnl, id=id_ref.GetId(), label='Run Config')
+    sizer = wx.BoxSizer(wx.VERTICAL)
+    sizer.Add(cfg_button, 0, 0, 0)
+    pnl.SetSizer(sizer)
+    pnl.Fit()
+    pnl_sz = pnl.GetBestSize()
+    frame.SetClientSize(pnl_sz)
 
-    def print_cfg():
-        c_config = _get_calibration_config(main)
-        print(c_config)
+    def on_btn(event:wx.CommandEvent):
+        btn = event.GetEventObject()
+        btn.Disable()
+        if btn == cfg_button:
+            dlg = CalibConfigurator(frame)
+        else:
+            return
 
-    but = ttk.Button(main, text='Config', command=print_cfg)
-    but.pack(side=tk.TOP, expand=True)
+        def on_dlg_show(event: wx.ShowEvent):
+            if event.IsShown():
+                return
+            dlg.Destroy()
+            btn.Enable()
 
-    tk.mainloop()
+        dlg.Bind(wx.EVT_SHOW, on_dlg_show)
+        dlg.Show()
+
+    frame.Bind(wx.EVT_BUTTON, on_btn)
+    frame.Show()
+    app.MainLoop()
+
 
 

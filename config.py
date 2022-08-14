@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
 from threading import Lock
-from typing import List, Union, Sequence
+from typing import List, Union, Sequence, Tuple
 import wx
 
 
@@ -102,6 +102,41 @@ class Config:
             if self._lock.locked():
                 self._lock.release()
 
+    def set_used_lines(self, used_lines: str):
+        try:
+            self._lock.acquire()
+            self._config.Write('/Calib/UseLines', used_lines)
+            self._config.Flush()
+        finally:
+            if self._lock.locked():
+                self._lock.release()
+
+    def get_used_lines(self) -> str:
+        try:
+            self._lock.acquire()
+            return self._config.Read('/Calib/UseLines', 'Ne I')
+        finally:
+            if self._lock.locked():
+                self._lock.release()
+
+    def set_line_limits(self, lower: int, upper: int):
+        try:
+            self._lock.acquire()
+            self._config.WriteInt('/Calib/Low', lower)
+            self._config.WriteInt('/Calib/High', upper)
+            self._config.Flush()
+        finally:
+            if self._lock.locked():
+                self._lock.release()
+
+    def get_line_limits(self) -> Tuple[int, int]:
+        try:
+            self._lock.acquire()
+            return self._config.ReadInt('/Calib/Low', 3000), self._config.ReadInt('/Calib/High', 10000)
+        finally:
+            if self._lock.locked():
+                self._lock.release()
+
     @staticmethod
     def get():
         try:
@@ -137,6 +172,9 @@ class Config:
     @staticmethod
     def _get_calib_dir():
         user_config_dir = wx.StandardPaths.Get().GetUserDataDir()
-        return Path(user_config_dir) / 'calib'
+        user_config_path = Path(user_config_dir)
+        if user_config_path.exists() and not user_config_path.is_dir():
+            user_config_path = Path(user_config_dir + '_data')
+        return user_config_path / 'calib'
 
 
