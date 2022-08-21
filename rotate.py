@@ -2,7 +2,6 @@ from astropy.io import fits
 import functools
 from math import asin, sqrt, degrees
 import numpy.typing as npt
-from os import PathLike
 from pathlib import Path
 from scipy.ndimage import rotate
 from scipy.signal import find_peaks

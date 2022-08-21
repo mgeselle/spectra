@@ -5,7 +5,7 @@ import wx
 from config import Config
 
 
-def size_text_by_chars(tc: Union[wx.TextCtrl, wx.ComboBox], num_chars: int):
+def size_text_by_chars(tc: Union[wx.TextCtrl, wx.ComboBox, wx.Control], num_chars: int):
     ext = tc.GetFullTextExtent('M' * num_chars)
     sz = tc.GetSizeFromTextSize(ext[0])
     tc.SetInitialSize(sz)

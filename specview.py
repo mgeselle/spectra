@@ -30,8 +30,8 @@ class Specview(wx.Panel):
         self._picking_cb = None
         self._picking_me_cid = None
         self._picking_pi_cid = None
-        self._picking_line = None
-        self._pick_xdata = None
+        self._picking_line = dict()
+        # self._pick_xdata = None
         self._picked_x = None
 
     def add_spectrum(self, data: npt.NDArray[Any], lambda_ref: Union[None, float] = None,
@@ -43,8 +43,17 @@ class Specview(wx.Panel):
                 self._xdata = np.linspace(lambda_ref,
                                           lambda_ref + (data.shape[0] - 1) * lambda_step,
                                           data.shape[0] - 1)
-        line_id = f'line{self._line_id:<d}'
-        self._lines[line_id] = self._axes.plot(self._xdata, data, fmt).pop()
+        return self.add_markers(self._xdata, data, fmt=fmt)
+
+    def add_markers(self, xdata: npt.NDArray[Any], ydata: npt.NDArray[any], fmt: str = 'or',
+                    line_id: Union[None, str] = None):
+        if not line_id:
+            line_id = f'line{self._line_id:<d}'
+            self._line_id += 1
+        if line_id not in self._lines:
+            self._lines[line_id] = self._axes.plot(xdata, ydata, fmt).pop()
+        else:
+            self._lines[line_id].set_data(xdata, ydata)
         self._axes.relim()
         self._canvas.draw()
 
@@ -53,7 +62,10 @@ class Specview(wx.Panel):
     def clear(self):
         for item in self._lines.items():
             item[1].remove()
+        for pick in self._picking_line.items():
+            pick[1].remove()
         self._lines.clear()
+        self._picking_line.clear()
         self._canvas.draw()
 
     def set_spectrum_data(self, spec_id: str, data: npt.NDArray[Any]):
@@ -70,12 +82,13 @@ class Specview(wx.Panel):
             self._picking_me_cid = self._canvas.mpl_connect('button_press_event', self._on_click)
         self._picking_cb = callback
 
-    def set_pick_data(self, xdata: npt.NDArray[Any], ydata: npt.NDArray[Any], fmt: str = 'or'):
-        if self._picking_line is None:
-            self._picking_line, = self._axes.plot(xdata, ydata, fmt)
+    def set_pick_data(self, xdata: npt.NDArray[Any], ydata: npt.NDArray[Any], fmt: str = 'or',
+                      name: str = 'default'):
+        if name not in self._picking_line:
+            self._picking_line[name], = self._axes.plot(xdata, ydata, fmt)
         else:
-            self._picking_line.set_data(xdata, ydata)
-        self._pick_xdata = xdata
+            self._picking_line[name].set_data(xdata, ydata)
+        #self._pick_xdata = xdata
         self._canvas.draw()
 
     def _on_click(self, event: MouseEvent):
