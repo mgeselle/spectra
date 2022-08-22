@@ -175,6 +175,7 @@ class CalibConfigurator(wx.Dialog):
 
         print('Leaving _on_close')
 
+    # noinspection PyUnusedLocal
     def _on_error(self, event: ErrorEvent):
         self._event_ack.wait()
         with wx.MessageDialog(self, self._error_msg, caption='Retrieval Errors',
@@ -249,6 +250,7 @@ class CalibFileDialog(wx.Dialog):
         self._pgm_file = None
         self._output_dir = None
 
+    # noinspection PyUnusedLocal
     def _find_spectra(self, event: wx.Event):
         input_dir = self._in_dir_text.GetValue().strip()
         input_path = None
@@ -422,7 +424,11 @@ class CalibDialog(wx.Dialog):
         left_vbox.Add(degree_box, 0, wx.TOP, 5)
 
         self._specview = Specview(self)
-
+        display = wx.Display()
+        display_sz = display.GetClientArea()
+        width = int(0.6 * display_sz.GetWidth())
+        height = int(0.6 * display_sz.GetHeight())
+        self._specview.SetMinSize(wx.Size(width=width, height=height))
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         hbox.Add(left_vbox, 0, wx.EXPAND, 0)
         hbox.Add(self._specview, 1, wx.EXPAND, 0)
@@ -431,9 +437,7 @@ class CalibDialog(wx.Dialog):
 
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.Add(hbox, 1, wx.EXPAND, 0)
-        vbox.Add(btn_sizer, 0, wx.EXPAND, 0)
-
-        self.SetSizer(vbox)
+        vbox.Add(btn_sizer, 0, wx.EXPAND | wx.BOTTOM, 5)
 
         self.Bind(wx.EVT_BUTTON, self._on_btn)
         self._grid.Bind(grid.EVT_GRID_CELL_CHANGING, self._on_cell_changing)
@@ -468,13 +472,12 @@ class CalibDialog(wx.Dialog):
         self._grid.SetCellValue(0, 0, choices_list[0])
         self._markers = self._specview.add_markers(peaks, peak_y, fmt='vr')
 
-        self.Fit()
-        self.Layout()
-        display = wx.Display()
-        display_sz = display.GetClientArea()
-        width = int(0.6 * display_sz.GetWidth())
-        height = int(0.6 * display_sz.GetHeight())
-        self.SetSizeHints(width, height)
+        vbox.SetSizeHints(self)
+        self.SetSizer(vbox)
+
+    @property
+    def poly(self):
+        return self._poly
 
     def _on_btn(self, event: wx.CommandEvent):
         if event.GetId() == wx.ID_CANCEL:
@@ -483,8 +486,10 @@ class CalibDialog(wx.Dialog):
             else:
                 self.Show(False)
             return
+        if self._poly is None:
+            return
         if self.IsModal():
-            self.Show(wx.OK)
+            self.EndModal(wx.OK)
         else:
             self.Show(False)
 
@@ -546,6 +551,7 @@ class CalibDialog(wx.Dialog):
         if self._degree.GetMax() < self._degree.GetValue():
             self._degree.SetValue(self._degree.GetMax())
 
+    # noinspection PyUnusedLocal
     def _on_calc_btn(self, event: wx.CommandEvent):
         nonzero = np.nonzero(self._lambda)[0]
         xdata = np.empty(len(nonzero))
@@ -574,6 +580,7 @@ def apply_calibration(input_path: Path, calib: Callable[[npt.NDArray], npt.NDArr
     for i in range(0, data.shape[0]):
         if i == 0 or i == data.shape[0] - 1:
             out_data[i] = data[i]
+            out_wl += wl_step
             continue
         while out_wl > in_wl[orig_i + 1]:
             orig_i += 1
@@ -606,16 +613,21 @@ if __name__ == '__main__':
     pnl_sz = pnl.GetBestSize()
     frame.SetClientSize(pnl_sz)
 
-    def show_calib_dialog(calib_file: Path, calib_btn: wx.Button):
+    def show_calib_dialog(calib_file: Path, pgm_file: Path, output_path: Path, calib_btn: wx.Button):
         with fits.open(calib_file) as in_hdu_l:
             data = in_hdu_l[0].data
         peaks = find_peaks(data)
-        calib_dlg = CalibDialog(frame, data, peaks)
+        calib_dlg = CalibDialog(frame, data, peaks, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 
         def on_calib_show(evt: wx.ShowEvent):
             if evt.IsShown():
                 return
+            l_poly = calib_dlg.poly
             calib_dlg.Destroy()
+            if poly is not None:
+                apply_calibration(calib_file, l_poly, output_path)
+                if pgm_file is not None:
+                    apply_calibration(pgm_file, l_poly, output_path)
             calib_btn.Enable()
 
         calib_dlg.Bind(wx.EVT_SHOW, on_calib_show)
@@ -636,12 +648,16 @@ if __name__ == '__main__':
             if evt.IsShown():
                 return
             calib_file = None
+            pgm_file = None
+            output_path = None
             if isinstance(dlg, CalibFileDialog):
                 calib_file = dlg.calib_file
+                pgm_file = dlg.pgm_file
+                output_path = dlg.output_dir
             dlg.Destroy()
 
             if calib_file:
-                show_calib_dialog(calib_file, btn)
+                show_calib_dialog(calib_file, pgm_file, output_path, btn)
             else:
                 btn.Enable()
 
@@ -651,6 +667,3 @@ if __name__ == '__main__':
     frame.Bind(wx.EVT_BUTTON, on_btn)
     frame.Show()
     app.MainLoop()
-
-
-
