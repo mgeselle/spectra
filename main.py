@@ -1,9 +1,10 @@
 from astropy.io import fits
 from pathlib import Path
 import sys
+from typing import Tuple
 import wx
 
-from calib import CalibConfigurator
+import calib
 from combine import Combine
 from configgui import CamCfgGUI
 from crop import Crop
@@ -40,6 +41,10 @@ class Main(wx.Frame):
         reduce_item = self._img_ops_menu.Append(ID_REDUCE.GetId(), '&Reduce...')
         menubar.Append(self._img_ops_menu, '&Image Ops')
 
+        self._spec_ops_menu = wx.Menu()
+        calib_item = self._spec_ops_menu.Append(wx.ID_ANY, '&Wavelength Calibration')
+        menubar.Append(self._spec_ops_menu, '&Spectrum Ops')
+
         self._config_menu = wx.Menu()
         camera_item = self._config_menu.Append(ID_CFG_CAMERA.GetId(), '&Camera')
         calib_cfg_item = self._config_menu.Append(ID_CFG_CALIB.GetId(), 'C&alibration')
@@ -63,8 +68,9 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Combine(self)), combine_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Crop(self)), crop_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Reduce(self)), reduce_item)
+        self.Bind(wx.EVT_MENU, self._show_calib_file_dialog, calib_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
-        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CalibConfigurator(self)), calib_cfg_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
 
         display = wx.Display()
         display_sz = display.GetClientArea()
@@ -95,22 +101,71 @@ class Main(wx.Frame):
         if header['NAXIS'] == 1:
             self.make_specview_visible(True)
             self._specview.clear()
-            self._specview.add_spectrum(data)
+            if 'CRVAL1' in header:
+                lambda_step = float(header['CDELT1'])
+                lambda_ref = float(header['CRVAL1']) + (1 - float(header['CRPIX1'])) * lambda_step
+                self._specview.add_spectrum(data, lambda_ref, lambda_step)
+            else:
+                self._specview.add_spectrum(data)
         elif header['NAXIS'] == 2:
             data = None
             self.make_specview_visible(False)
             self._image_display.display(file_name)
 
+    def _show_calib_file_dialog(self, event: wx.CommandEvent):
+        menu, item = Main._disable_before_open(event)
+        dialog = calib.CalibFileDialog(self)
+
+        def _on_calib_file_close(evt: wx.ShowEvent):
+            if evt.IsShown():
+                return
+            calib_file = dialog.calib_file
+            pgm_file = dialog.pgm_file
+            output_path = dialog.output_dir
+
+            dialog.Destroy()
+            if not calib_file:
+                menu.Enable(item, True)
+                return
+
+            with fits.open(calib_file) as hdu_l:
+                data = hdu_l[0].data
+            peaks = calib.find_peaks(data)
+            calib_dialog = calib.CalibDialog(self, data, peaks, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+
+            def _on_calib_close(calib_show_evt: wx.ShowEvent):
+                if calib_show_evt.IsShown():
+                    return
+                poly = calib_dialog.poly
+                calib_dialog.Destroy()
+                if poly is not None:
+                    calib.apply_calibration(calib_file, poly, output_path)
+                    if pgm_file:
+                        calib.apply_calibration(pgm_file, poly, output_path)
+                menu.Enable(item, True)
+
+            calib_dialog.Bind(wx.EVT_SHOW, _on_calib_close)
+            calib_dialog.Show()
+
+        dialog.Bind(wx.EVT_SHOW, _on_calib_file_close)
+        dialog.Show()
+
+    @staticmethod
+    def _disable_before_open(event: wx.CommandEvent) -> Tuple[wx.Menu, int]:
+        menu = event.GetEventObject()
+        item = event.GetId()
+        menu.Enable(item, False)
+        return menu, item
+
     @staticmethod
     def _enable_after_close(event: wx.ShowEvent, menu: wx.Menu, item_id: int):
         if not event.IsShown():
             menu.Enable(item_id, True)
+            event.GetEventObject().Destroy()
 
     @staticmethod
     def _show_dialog(event: wx.CommandEvent, dialog: wx.Dialog):
-        menu = event.GetEventObject()
-        item = event.GetId()
-        menu.Enable(item, False)
+        menu, item = Main._disable_before_open(event)
         dialog.Bind(wx.EVT_SHOW, lambda evt: Main._enable_after_close(evt, menu, item))
         dialog.Show()
 

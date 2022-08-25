@@ -31,18 +31,20 @@ class Specview(wx.Panel):
         self._picking_me_cid = None
         self._picking_pi_cid = None
         self._picking_line = dict()
-        # self._pick_xdata = None
         self._picked_x = None
 
     def add_spectrum(self, data: npt.NDArray[Any], lambda_ref: Union[None, float] = None,
-                     lambda_step: Union[None, float] = None, fmt: str = '-b') -> str:
+                     lambda_step: Union[None, float] = None, fmt: str = '-b', unit: str = u'\u00c5') -> str:
         if self._xdata is None:
             if lambda_ref is None:
                 self._xdata = np.arange(data.shape[0])
+                self._axes.set_xlabel('Pixels')
             else:
                 self._xdata = np.linspace(lambda_ref,
                                           lambda_ref + (data.shape[0] - 1) * lambda_step,
-                                          data.shape[0] - 1)
+                                          data.shape[0])
+                self._axes.set_xlabel(unit)
+
         return self.add_markers(self._xdata, data, fmt=fmt)
 
     def add_markers(self, xdata: npt.NDArray[Any], ydata: npt.NDArray[any], fmt: str = 'or',
@@ -67,6 +69,7 @@ class Specview(wx.Panel):
         self._lines.clear()
         self._picking_line.clear()
         self._canvas.draw()
+        self._xdata = None
 
     def set_spectrum_data(self, spec_id: str, data: npt.NDArray[Any]):
         if spec_id not in self._lines:
@@ -88,7 +91,6 @@ class Specview(wx.Panel):
             self._picking_line[name], = self._axes.plot(xdata, ydata, fmt)
         else:
             self._picking_line[name].set_data(xdata, ydata)
-        #self._pick_xdata = xdata
         self._canvas.draw()
 
     def _on_click(self, event: MouseEvent):

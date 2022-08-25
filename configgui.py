@@ -51,12 +51,15 @@ class CamCfgGUI(wx.Dialog):
         btn_sizer_s = self.CreateSeparatedSizer(btn_sizer)
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.Add(grid, 0, wx.ALL | wx.EXPAND, 10)
-        vbox.Add(btn_sizer_s, 0, wx.TOP | wx.LEFT | wx.RIGHT | wx.EXPAND, 10)
+        vbox.Add(btn_sizer_s, 0, wx.TOP | wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 10)
 
         panel.SetSizer(vbox)
         panel.Fit()
 
         sz = panel.GetBestSize()
+        self.SetClientSize(sz)
+        self.Layout()
+        sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
         self.Bind(wx.EVT_COMBOBOX, self._combo_evt)
