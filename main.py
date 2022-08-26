@@ -5,6 +5,7 @@ from typing import Tuple
 import wx
 
 import calib
+import fitsheader
 from combine import Combine
 from configgui import CamCfgGUI
 from crop import Crop
@@ -31,6 +32,7 @@ class Main(wx.Frame):
 
         self._file_menu = wx.Menu()
         open_item = self._file_menu.Append(ID_OPEN.GetId(), '&Open File...')
+        header_item = self._file_menu.Append(wx.ID_ANY, 'Show &Header')
         self._file_menu.AppendSeparator()
         exit_item = self._file_menu.Append(wx.ID_EXIT)
         menubar.Append(self._file_menu, '&File')
@@ -64,6 +66,7 @@ class Main(wx.Frame):
         self._specview_visible = True
 
         self.Bind(wx.EVT_MENU, self._open, open_item)
+        self.Bind(wx.EVT_MENU, self._show_header, header_item)
         self.Bind(wx.EVT_MENU, lambda evt: sys.exit(0), exit_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Combine(self)), combine_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Crop(self)), crop_item)
@@ -98,19 +101,35 @@ class Main(wx.Frame):
         header = hdu_l[0].header
         data = hdu_l[0].data
         hdu_l.close()
-        if header['NAXIS'] == 1:
+        if header['NAXIS'] == 1 or data.shape[0] == 1:
+            if data.shape[0] == 1:
+                disp_data = data[0]
+            else:
+                disp_data = data
             self.make_specview_visible(True)
             self._specview.clear()
             if 'CRVAL1' in header:
                 lambda_step = float(header['CDELT1'])
                 lambda_ref = float(header['CRVAL1']) + (1 - float(header['CRPIX1'])) * lambda_step
-                self._specview.add_spectrum(data, lambda_ref, lambda_step)
+                self._specview.add_spectrum(disp_data, lambda_ref, lambda_step)
             else:
-                self._specview.add_spectrum(data)
+                self._specview.add_spectrum(disp_data)
         elif header['NAXIS'] == 2:
             data = None
             self.make_specview_visible(False)
             self._image_display.display(file_name)
+
+    def _show_header(self, event: wx.CommandEvent):
+        menu, item = Main._disable_before_open(event)
+
+        file = wxutil.select_file(self)
+        if not file:
+            menu.Enable(item, True)
+            return
+
+        dlg = fitsheader.FitsHeaderDialog(self, Path(file))
+        dlg.Bind(wx.EVT_SHOW, lambda evt: Main._enable_after_close(evt, menu, item))
+        dlg.Show()
 
     def _show_calib_file_dialog(self, event: wx.CommandEvent):
         menu, item = Main._disable_before_open(event)

@@ -56,7 +56,7 @@ class Specview(wx.Panel):
             self._lines[line_id] = self._axes.plot(xdata, ydata, fmt).pop()
         else:
             self._lines[line_id].set_data(xdata, ydata)
-        self._axes.relim()
+        self._axes.autoscale()
         self._canvas.draw()
 
         return line_id
@@ -68,6 +68,7 @@ class Specview(wx.Panel):
             pick[1].remove()
         self._lines.clear()
         self._picking_line.clear()
+        self._axes.relim()
         self._canvas.draw()
         self._xdata = None
 
