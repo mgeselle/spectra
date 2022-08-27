@@ -11,12 +11,12 @@ def size_text_by_chars(tc: Union[wx.TextCtrl, wx.ComboBox, wx.Control], num_char
     tc.SetInitialSize(sz)
 
 
-def select_dir(parent: wx.Window, must_exist: bool) -> Union[None, str]:
+def select_dir(parent: wx.Window, must_exist: bool, title: str = 'Choose Directory') -> Union[None, str]:
     initial_dir = str(Config.get().get_last_directory())
     style = wx.DD_DEFAULT_STYLE
     if must_exist:
         style = style | wx.DD_DIR_MUST_EXIST
-    with wx.DirDialog(parent, 'Choose Directory', defaultPath=initial_dir, style=style) as dlg:
+    with wx.DirDialog(parent, title, defaultPath=initial_dir, style=style) as dlg:
         dlg_res = dlg.ShowModal()
         if dlg_res == wx.ID_CANCEL:
             return None
@@ -25,9 +25,9 @@ def select_dir(parent: wx.Window, must_exist: bool) -> Union[None, str]:
         return raw_result.replace(str(Path.home()), '~')
 
 
-def select_file(parent: wx.Window) -> Union[None, str]:
+def select_file(parent: wx.Window, title: str = 'Open FITS file') -> Union[None, str]:
     initial_dir = str(Config.get().get_last_directory())
-    with wx.FileDialog(parent, message='Open FITS file', defaultDir=initial_dir,
+    with wx.FileDialog(parent, message=title, defaultDir=initial_dir,
                        wildcard='FITS files (*.fit;*.fits)|*.fit;*.fits',
                        style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dlg:
         dlg_res = dlg.ShowModal()

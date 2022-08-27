@@ -1,0 +1,224 @@
+import astropy.constants as ac
+import astropy.io.fits as fits
+import astropy.units as u
+import numpy as np
+import numpy.ma as ma
+import numpy.polynomial as npp
+import numpy.typing as npt
+import scipy.optimize as sco
+
+from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.time import Time
+from astroquery.simbad import Simbad
+from pathlib import Path
+from typing import Any
+
+
+def resample_ref(rec_header: fits.Header, ref_header: fits.Header, ref_data: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Resamples a reference spectrum to match a recorded one in wavelength range and sampling.
+
+    The reference spectrum is first Doppler-shifted to match the position of the spectral
+    features to the recorded one. This relies on the header keywords SITELAT, SITELONG, and
+    DATE_OBS in the header of the recorded spectrum.
+    The object position is looked up from Simbad using the OBJECT header card from the reference file.
+
+    Args:
+        rec_header: header of the recorded FITS file
+        ref_header: header of the reference FITS file
+        ref_data: data from the reference FITS file
+
+    Returns:
+        Resampled reference data.
+    """
+    if 'SITELAT' not in rec_header or 'SITELONG' not in rec_header:
+        raise ValueError('No coordinate info in recorded FITS file')
+
+    location = EarthLocation.from_geodetic(rec_header['SITELONG'] * u.deg, rec_header['SITELAT'] * u.deg)
+    obs_time = Time(rec_header['DATE-OBS'], format='isot', scale='utc')
+
+    if ref_data.shape[0] == 1:
+        ref_data = ref_data[0]
+
+    table = Simbad.query_object(ref_header['OBJECT'])
+    if table is None:
+        raise ValueError(f"Object {ref_header['OBJECT']} not found in Simbad")
+    for ra_str, dec_str in table.iterrows('RA', 'DEC'):
+        pos = SkyCoord(ra_str, dec_str, unit=(u.hourangle, u.deg))
+        break
+
+    # noinspection PyUnboundLocalVariable
+    bary_ms = pos.radial_velocity_correction('barycentric', obs_time, location).to(u.m/u.s)
+    # noinspection PyUnresolvedReferences
+    corr = (1.0 - bary_ms / ac.c).value
+    cr_step = ref_header['CDELT1']
+    cr_lambda = ref_header['CRVAL1'] + (1 - ref_header['CRPIX1']) * cr_step
+    ref_samples = ref_data.shape[0]
+    ref_lambda = np.linspace(cr_lambda, cr_lambda + (ref_samples - 1) * cr_step, ref_samples) * corr
+
+    rec_step = rec_header['CDELT1']
+    rec_lambda_start = rec_header['CRVAL1'] + (1 - rec_header['CRPIX1']) * rec_step
+    rec_samples = rec_header['NAXIS1']
+    rec_lambda = np.linspace(rec_lambda_start, rec_lambda_start + (rec_samples - 1) * rec_step, rec_samples)
+
+    interval = ref_samples >> 1
+    ref_idx = interval
+    while interval > 0:
+        if ref_lambda[ref_idx] == rec_lambda[0] or (ref_lambda[ref_idx] < rec_lambda[0] < ref_lambda[ref_idx + 1]):
+            break
+        interval >>= 1
+        if ref_lambda[ref_idx] > rec_lambda[0]:
+            ref_idx -= interval
+        else:
+            ref_idx += interval
+    while rec_lambda[0] < ref_lambda[ref_idx]:
+        ref_idx -= 1
+    while rec_lambda[0] > ref_lambda[ref_idx + 1]:
+        ref_idx += 1
+
+    result = np.empty(rec_samples)
+    slope = None
+    for rec_idx in range(0, rec_samples):
+        if slope is None or rec_lambda[rec_idx] >= ref_lambda[ref_idx + 1]:
+            while rec_lambda[rec_idx] >= ref_lambda[ref_idx + 1]:
+                ref_idx += 1
+            slope = (ref_data[ref_idx + 1] - ref_data[ref_idx]) / (ref_lambda[ref_idx + 1] / ref_lambda[ref_idx])
+        result[rec_idx] = ref_data[ref_idx] + slope * (rec_lambda[rec_idx] - ref_lambda[ref_idx])
+
+    return result
+
+
+def fit_ref_to_recorded(ref_data: npt.NDArray[Any], rec_data: npt.NDArray[Any]) -> npt.NDArray:
+    """Scales a reference spectrum such that the difference between this spectrum and a recorded one becomes minimal.
+
+    Args:
+        ref_data: reference spectrum
+        rec_data: recorded spectrum
+
+    Returns:
+        scaled reference spectrum
+    """
+    # noinspection PyPep8Naming
+    A = np.vstack([ref_data, np.ones(ref_data.size)]).T
+    # Constraining vertical shift to zero
+    sol = sco.lsq_linear(A, rec_data, ((-np.inf, 0), (np.inf, 0.000000001)))
+
+    # noinspection PyUnresolvedReferences
+    return ref_data * sol.x[0]
+
+
+def fit_continuum(data: npt.NDArray[Any], lambda_start: float, lambda_step: float) -> npt.NDArray[Any]:
+    """Fits a continuum to a spectrum.
+
+    This is looking for a self-consistent solution:
+    Initially we are fitting a polynomial to the entire data. Big deviations from the
+    fitted polynomial are usually due to absorption or emission lines. We exclude
+    any data where the deviation is more than 3 times the RMS deviation and do the
+     fit again. This is repeated until no more data are rejected.
+
+     Args:
+        data: spectrum data
+        lambda_start: wavelength at index 0 - used for debugging
+        lambda_step: wavelength step between two data elements.
+
+    Returns:
+          Fitted continuum
+    """
+    xdata = ma.asarray(np.linspace(lambda_start, lambda_start + (data.size - 1) * lambda_step, data.size))
+    ydata = ma.asarray(data)
+
+    # Look for self-consistent solution: big deviations from the continuum curve
+    # are usually due to absorption or emission lines. Those are masked and
+    # the fit done again until no more pixels are rejected.
+    pixel_rejected = True
+    poly = None
+    while pixel_rejected:
+        pixel_rejected = False
+        if xdata.mask is ma.nomask:
+            xfit = xdata
+            yfit = ydata
+        else:
+            xfit = xdata[~xdata.mask]
+            yfit = ydata[~ydata.mask]
+        poly = npp.Polynomial.fit(xfit, yfit, 30)
+        # noinspection PyCallingNonCallable
+        residual = (ydata - poly(xdata))**2
+        residual.mask = ydata.mask
+        mean_var = ma.mean(residual)
+        rej_idx = ma.nonzero(residual > 9 * mean_var)
+        for idx in rej_idx[0]:
+            pixel_rejected = True
+            xdata[idx] = ma.masked
+            ydata[idx] = ma.masked
+
+    xdata.mask = ma.nomask
+    # noinspection PyCallingNonCallable
+    return np.asarray(poly(xdata))
+
+
+def create_response(rec_file: Path, ref_file: Path, output_path: Path):
+    with fits.open(rec_file) as hdu:
+        rec_header = hdu[0].header
+        rec_data = hdu[0].data
+    rec_step = rec_header['CDELT1']
+    rec_lambda_start = rec_header['CRVAL1'] + (1 - rec_header['CRPIX1']) * rec_step
+
+    with fits.open(ref_file) as hdu:
+        ref_header = hdu[0].header
+        ref_data = hdu[0].data
+
+    ref_resampled = resample_ref(rec_header, ref_header, ref_data)
+    ref_resampled = fit_ref_to_recorded(ref_resampled, rec_data)
+
+    rec_continuum = fit_continuum(rec_data, rec_lambda_start, rec_step)
+    ref_continuum = fit_continuum(ref_resampled, rec_lambda_start, rec_step)
+    response = rec_continuum / ref_continuum
+
+    resp_header = fits.Header()
+    resp_header.add_comment(rec_header['COMMENT'][0])
+    resp_header.add_comment(rec_header['COMMENT'][1])
+    if 'OBJECT' in ref_header:
+        resp_header['OBJNAME'] = ref_header['OBJECT']
+    elif 'OBJNAME' in ref_header:
+        resp_header['OBJNAME'] = ref_header['OBJNAME']
+    resp_header.append(('DATE-OBS', rec_header['DATE-OBS'], 'Start of observation'))
+
+    fits.PrimaryHDU(response, resp_header).writeto(output_path / 'response.fits', overwrite=True)
+
+    corr_data = rec_data / response
+    corr_header = fits.Header(rec_header, copy=True)
+    corr_header.add_comment('Response-corrected using Spectra.')
+    max_idx = ref_continuum.argmax()
+    corr_data = corr_data / corr_data[max_idx]
+
+    fits.PrimaryHDU(corr_data, corr_header).writeto(output_path / rec_file.name, overwrite=True)
+
+
+if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+
+    in_dir = Path.home() / 'astrowrk/spectra/calibrated'
+    out_dir = Path.home() / 'astrowrk/spectra/response-corrected'
+    rec = list(in_dir.glob('Castor_L*'))[0]
+    ref = list(in_dir.glob('Castor-M*'))[0]
+
+    create_response(rec, ref, out_dir)
+
+    with fits.open(out_dir / rec.name) as r_hdu:
+        r_data = r_hdu[0].data
+        r_header = r_hdu[0].header
+    r_step = r_header['CDELT1']
+    r_lambda_start = r_header['CRVAL1'] + (1 - r_header['CRPIX1']) * r_step
+    r_samples = r_header['NAXIS1']
+    r_lambda = np.linspace(r_lambda_start, r_lambda_start + (r_samples - 1) * r_step, r_samples)
+
+    with fits.open(ref) as ref_hdu:
+        ref_hdr = ref_hdu[0].header
+        ref_dta = ref_hdu[0].data
+    ref_rescaled = resample_ref(r_header, ref_hdr, ref_dta)
+    ref_max = ref_rescaled.argmax()
+    ref_rescaled = ref_rescaled / ref_rescaled[ref_max]
+
+    fig, ax = plt.subplots()
+    ax.plot(r_lambda, ref_rescaled)
+    ax.plot(r_lambda, r_data)
+    plt.show()

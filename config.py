@@ -1,3 +1,4 @@
+from astropy.coordinates import EarthLocation
 from astropy.table import Table
 from dataclasses import dataclass
 from os import PathLike
@@ -11,6 +12,12 @@ import wx
 class CameraConfig:
     ron: float
     gain: float
+
+
+@dataclass
+class ObsLocation:
+    location: EarthLocation
+    active: bool
 
 
 class Config:
@@ -176,5 +183,3 @@ class Config:
         if user_config_path.exists() and not user_config_path.is_dir():
             user_config_path = Path(user_config_dir + '_data')
         return user_config_path / 'calib'
-
-
