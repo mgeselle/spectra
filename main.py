@@ -1,19 +1,21 @@
-from astropy.io import fits
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Tuple
+
 import wx
+from astropy.io import fits
 
 import calib
 import fitsheader
+import response
+import util
+import wxutil
 from combine import Combine
 from configgui import CamCfgGUI
 from crop import Crop
 from imgdisplay import ImageDisplay
 from reduce import Reduce
 from specview import Specview
-import wxutil
-
 
 ID_OPEN = wx.NewIdRef()
 ID_COMBINE = wx.NewIdRef()
@@ -45,6 +47,7 @@ class Main(wx.Frame):
 
         self._spec_ops_menu = wx.Menu()
         calib_item = self._spec_ops_menu.Append(wx.ID_ANY, '&Wavelength Calibration')
+        calc_resp_item = self._spec_ops_menu.Append(wx.ID_ANY, 'Calculate &Response')
         menubar.Append(self._spec_ops_menu, '&Spectrum Ops')
 
         self._config_menu = wx.Menu()
@@ -72,6 +75,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Crop(self)), crop_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Reduce(self)), reduce_item)
         self.Bind(wx.EVT_MENU, self._show_calib_file_dialog, calib_item)
+        self.Bind(wx.EVT_MENU, self._run_calc_response, calc_resp_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
 
@@ -168,6 +172,32 @@ class Main(wx.Frame):
 
         dialog.Bind(wx.EVT_SHOW, _on_calib_file_close)
         dialog.Show()
+
+    def _run_calc_response(self, event: wx.CommandEvent):
+        menu, item = Main._disable_before_open(event)
+        rec_file = wxutil.select_file(self, 'Select Recorded Spectrum')
+        if not rec_file:
+            menu.Enable(item, True)
+            return
+        ref_file = wxutil.select_file(self, 'Select Reference Spectrum')
+        if not ref_file:
+            menu.Enable(item, True)
+            return
+        out_dir = wxutil.select_dir(self, must_exist=False, title='Select Output Directory')
+        if out_dir:
+            rec_path = Path(rec_file)
+            ref_path = Path(ref_file)
+            out_path = util.dir_to_path(out_dir)
+            try:
+                out_path.mkdir(parents=True, exist_ok=True)
+            except PermissionError as e:
+                with wx.MessageDialog(self, 'Error creating output directory: ' + str(e), 'Error',
+                                      style=wx.OK | wx.CENTRE | wx.ICON_ERROR) as dlg:
+                    dlg.ShowModal()
+                menu.Enable(item, True)
+                return
+            response.create_response(rec_path, ref_path, out_path)
+        menu.Enable(item, True)
 
     @staticmethod
     def _disable_before_open(event: wx.CommandEvent) -> Tuple[wx.Menu, int]:

@@ -181,6 +181,8 @@ def create_response(rec_file: Path, ref_file: Path, output_path: Path):
     elif 'OBJNAME' in ref_header:
         resp_header['OBJNAME'] = ref_header['OBJNAME']
     resp_header.append(('DATE-OBS', rec_header['DATE-OBS'], 'Start of observation'))
+    for kw in ('CRPIX1', 'CRVAL1', 'CDELT1', 'CTYPE1', 'CUNIT1'):
+        resp_header[kw] = rec_header[kw]
 
     fits.PrimaryHDU(response, resp_header).writeto(output_path / 'response.fits', overwrite=True)
 
