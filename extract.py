@@ -5,6 +5,7 @@ from typing import Union, Tuple, Sequence, Any, Callable
 import numpy as np
 import numpy.ma as ma
 import numpy.typing as npt
+import wx
 from astropy.io import fits
 from numpy.polynomial import Polynomial
 
@@ -226,22 +227,22 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
         if callback(start_with, 'Extracting spectrum...'):
             return None
     n_img = ma.asarray(net_img[d_low:d_high, :])
-    f_lam = np.sum(n_img, axis=0)
+    f_lam = ma.sum(n_img, axis=0)
     f_lam_sq = f_lam**2
     v_img = ma.asarray(var_img[d_low:d_high, :])
     s_img = ma.asarray(sky_img[d_low:d_high, :])
-    p_x_lam = n_img / f_lam
+    p_lam = n_img / f_lam
+    p_lam_m = p_lam.copy()
+    p_lam_m.harden_mask()
     x_val = ma.arange(n_img.shape[1])
-    p_lam = ma.empty(n_img.shape, dtype=np.float64)
-    p_sum = np.empty(n_img.shape[1], dtype=np.float64)
     v_0 = (cam_cfg.ron / cam_cfg.gain)**2
 
     # Iterate for profile (p_lam, p_sum)
     pixel_rejected = True
     while pixel_rejected:
-        weights = 1 / v_img * f_lam_sq
+        weights = f_lam_sq / v_img
         for i in range(0, n_img.shape[0]):
-            p_slice = p_x_lam[i, :]
+            p_slice = p_lam_m[i, :]
             w_slice = weights[i, :]
             if p_slice.mask is ma.nomask:
                 x_val_fit = x_val
@@ -251,21 +252,23 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
                 x_val_fit = x_val[~p_slice.mask]
                 p_x_fit = p_slice[~p_slice.mask]
                 w_fit = w_slice[~p_slice.mask]
-            poly = Polynomial.fit(x_val_fit, p_x_fit, deg=10, w=w_fit)
+            poly = Polynomial.fit(x_val_fit, p_x_fit, deg=5, w=w_fit)
             # noinspection PyCallingNonCallable
             p_lam[i, :] = poly(x_val)
+
         p_lam[p_lam < 0] = 0
-        p_sum = ma.sum(p_lam, axis=0)
+        np.copyto(p_lam_m, p_lam)
+        p_sum = ma.sum(p_lam_m, axis=0)
         pixel_rejected = False
-        f_by_p = p_lam * f_lam / p_sum
+
+        f_by_p = p_lam_m * f_lam / p_sum
         v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
         residual = (n_img - f_by_p)**2 / v_img
-        residual.mask = p_x_lam.mask
         rej_idx = ma.nonzero(residual > 16)
         if len(rej_idx[0]) > 0:
             pixel_rejected = True
             for y, x in zip(rej_idx[0], rej_idx[1]):
-                p_x_lam[y, x] = ma.masked
+                p_lam_m[y, x] = ma.masked
     if callback:
         elapsed = time() - start
         if callback(start_with + prog_step, f'Computed profile in {elapsed:5.3f}s.'):
@@ -276,17 +279,24 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
     pixel_rejected = True
     variance = None
 
+    p_sum = ma.sum(p_lam, axis=0)
     p_lam_norm = p_lam / p_sum
+    p_lam_norm.harden_mask()
+    f_by_p = p_lam_norm * f_lam
+    v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
     while pixel_rejected:
         enumerator = ma.sum((p_lam_norm * n_img) / v_img, axis=0)
         variance = ma.sum(p_lam_norm**2 / v_img, axis=0)
         f_lam = enumerator / variance
         f_by_p = p_lam_norm * f_lam
+
         v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
         residual = (n_img - f_by_p)**2 / v_img
         pixel_rejected = False
-        residual.mask = p_lam.mask
-        rej_idx = ma.nonzero(residual > 25)
+        residual.mask = p_lam_norm.mask
+        # Horne is using 25 here, however, this seems to reject too much as the
+        # resulting spectrum is distorted. 300 appears to reliably kill cosmic rays.
+        rej_idx = ma.nonzero(residual > 300)
         max_res = None
         x_max = None
         y_max = None
@@ -298,10 +308,7 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
                 x_max = x
         if max_res is not None:
             pixel_rejected = True
-            p_lam[y_max, x_max] = ma.masked
-            n_img[y_max, x_max] = ma.masked
-            v_img[y_max, x_max] = ma.masked
-            s_img[y_max, x_max] = ma.masked
+            p_lam_norm[y_max, x_max] = ma.masked
 
     if callback:
         elapsed = time() - start
@@ -311,3 +318,12 @@ def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_
         if callback(start_with + budget, f'Rejected cosmic ray hits in {elapsed:5.3f}s. SNR >= {min_snr:6.0f}.'):
             return None
     return np.asarray(f_lam)
+
+
+if __name__ == '__main__':
+    app = wx.App()
+    app.SetAppName('spectra')
+
+    base_dir = Path.home() / 'astrowrk/spectra/anal'
+    in_file = base_dir / 'in/Dubhe.fits'
+    optimal(in_file, 'ST10XME', base_dir)

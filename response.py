@@ -10,6 +10,7 @@ import scipy.optimize as sco
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from astroquery.simbad import Simbad
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -193,6 +194,60 @@ def create_response(rec_file: Path, ref_file: Path, output_path: Path):
     corr_data = corr_data / corr_data[max_idx]
 
     fits.PrimaryHDU(corr_data, corr_header).writeto(output_path / rec_file.name, overwrite=True)
+
+
+def apply_response(resp_path: Path, pgm_path: Path, output_path: Path):
+    with fits.open(resp_path) as resp:
+        resp_header = resp[0].header
+        resp_data = resp[0].data
+
+    resp_lam_step = resp_header['CDELT1']
+    resp_lam_start = resp_header['CRVAL1'] + (1 - resp_header['CRPIX1']) * resp_lam_step
+    resp_lam_end = resp_lam_start + (resp_data.size - 1) * resp_lam_step
+
+    with fits.open(pgm_path) as pgm:
+        pgm_header = pgm[0].header
+        pgm_data = pgm[0].data
+
+    pgm_lam_step = pgm_header['CDELT1']
+    pgm_lam_start = pgm_header['CRVAL1'] + (1 - pgm_header['CRPIX1']) * pgm_lam_step
+    pgm_lam_end = pgm_lam_start + (pgm_data.size - 1) * pgm_lam_step
+
+    if pgm_lam_start >= resp_lam_start:
+        pgm_idx = 0
+    else:
+        pgm_idx = int(ceil(resp_lam_start - pgm_lam_start) / pgm_lam_step)
+        pgm_lam_start += pgm_idx * pgm_lam_step
+    resp_idx = int((pgm_lam_start - resp_lam_start) / resp_lam_step)
+
+    if resp_lam_end < pgm_lam_end:
+        pgm_lam_end = pgm_lam_start + int((resp_lam_end - pgm_lam_start) / pgm_lam_step) * pgm_lam_step
+        pgm_end_idx = int(pgm_lam_end - pgm_lam_start) / pgm_lam_step
+    else:
+        pgm_end_idx = int((pgm_lam_end - pgm_lam_start) / pgm_lam_step)
+
+    pgm_data = pgm_data[pgm_idx:pgm_end_idx]
+    slope = None
+    resp_res = np.empty(pgm_data.shape)
+    pgm_lam = pgm_lam_start
+    resp_lam = resp_lam_start + resp_idx * resp_lam_step
+    for pgm_idx in range(0, pgm_data.size):
+        if slope is None or resp_lam + resp_lam_step < pgm_lam:
+            while resp_lam + resp_lam_step < pgm_lam:
+                resp_lam += resp_lam_step
+                resp_idx += 1
+            slope = (resp_data[resp_idx + 1] - resp_data[resp_idx]) / resp_lam_step
+        resp_res[pgm_idx] = resp_data[resp_idx] + slope * (pgm_lam - resp_lam)
+        pgm_lam += pgm_lam_step
+
+    result = pgm_data / resp_res
+    result = result / np.max(result)
+    out_header = fits.Header(pgm_header)
+    out_header['CRPIX1'] = 1.0
+    out_header['CRVAL1'] = pgm_lam_start
+    out_header.add_history(f"Response corrected using response generated from {resp_header['OBJNAME']}")
+
+    fits.PrimaryHDU(result, out_header).writeto(output_path / pgm_path.name, overwrite=True)
 
 
 if __name__ == '__main__':

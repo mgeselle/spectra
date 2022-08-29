@@ -48,6 +48,7 @@ class Main(wx.Frame):
         self._spec_ops_menu = wx.Menu()
         calib_item = self._spec_ops_menu.Append(wx.ID_ANY, '&Wavelength Calibration')
         calc_resp_item = self._spec_ops_menu.Append(wx.ID_ANY, 'Calculate &Response')
+        apply_resp_item = self._spec_ops_menu.Append(wx.ID_ANY, '&Apply Response')
         menubar.Append(self._spec_ops_menu, '&Spectrum Ops')
 
         self._config_menu = wx.Menu()
@@ -76,6 +77,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Reduce(self)), reduce_item)
         self.Bind(wx.EVT_MENU, self._show_calib_file_dialog, calib_item)
         self.Bind(wx.EVT_MENU, self._run_calc_response, calc_resp_item)
+        self.Bind(wx.EVT_MENU, self._run_apply_response, apply_resp_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
 
@@ -197,6 +199,32 @@ class Main(wx.Frame):
                 menu.Enable(item, True)
                 return
             response.create_response(rec_path, ref_path, out_path)
+        menu.Enable(item, True)
+
+    def _run_apply_response(self, event: wx.CommandEvent):
+        menu, item = Main._disable_before_open(event)
+        resp_file = wxutil.select_file(self, 'Select Response File')
+        if not resp_file:
+            menu.Enable(item, True)
+            return
+        pgm_file = wxutil.select_file(self, 'Select Spectrum')
+        if not pgm_file:
+            menu.Enable(item, True)
+            return
+        out_dir = wxutil.select_dir(self, must_exist=False, title='Select Output Directory')
+        if out_dir:
+            resp_path = Path(resp_file)
+            pgm_path = Path(pgm_file)
+            out_path = util.dir_to_path(out_dir)
+            try:
+                out_path.mkdir(parents=True, exist_ok=True)
+            except PermissionError as e:
+                with wx.MessageDialog(self, 'Error creating output directory: ' + str(e), 'Error',
+                                      style=wx.OK | wx.CENTRE | wx.ICON_ERROR) as dlg:
+                    dlg.ShowModal()
+                menu.Enable(item, True)
+                return
+            response.apply_response(resp_path, pgm_path, out_path)
         menu.Enable(item, True)
 
     @staticmethod
