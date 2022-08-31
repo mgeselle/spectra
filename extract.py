@@ -1,12 +1,13 @@
 from pathlib import Path
 from time import time
-from typing import Union, Tuple, Sequence, Any, Callable
+from typing import Union, Tuple, Sequence, Any, Callable, Dict
 
 import numpy as np
 import numpy.ma as ma
 import numpy.typing as npt
 import wx
 from astropy.io import fits
+from astropy.time import Time, TimeDelta
 from numpy.polynomial import Polynomial
 
 from config import Config, CameraConfig
@@ -48,6 +49,7 @@ def simple_single(input_file: Path, limits: Union[Tuple[int, int],  Sequence[int
 
 def optimal(input_files: Union[Path, Sequence[Path]],
             config_name: str, output_path: Path,
+            header_overrides: Dict[str, str] = None,
             callback: Union[None, Callable[[int, str], bool]] = None,
             budget=100, start_with=0) -> Union[Tuple[int, int], Tuple[None, None]]:
     if isinstance(input_files, Path):
@@ -82,11 +84,46 @@ def optimal(input_files: Union[Path, Sequence[Path]],
             d_high = n_d_high
         progress += prog_step
 
-    out_spectrum = np.mean(out_data, axis=0)
     out_name = _get_common_name(input_files, 'optimal-1d')
-    out_hdu = fits.PrimaryHDU(out_spectrum, headers[0])
-    output_file = output_path / out_name
-    out_hdu.writeto(output_file, overwrite=True)
+    if out_name != 'optimal-1d':
+        out_spectrum = np.mean(out_data, axis=0)
+        min_time = None
+        max_time = None
+        end_time = None
+        total_exptime = 0.0
+        for header in headers:
+            head_time = Time(header['DATE-OBS'], format='isot', scale='utc')
+            total_exptime += float(header['EXPTIME'])
+            if min_time is None or head_time < min_time:
+                min_time = head_time
+            elif max_time is None or head_time > max_time:
+                max_time = head_time
+                end_time = max_time + TimeDelta(header['EXPTIME'], format='sec')
+        header = fits.Header()
+        header.add_comment("FITS (Flexible Image Transport System) is defined in 'Astronomy")
+        header.add_comment("and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H")
+        if out_data.shape[0] > 1:
+            header.add_comment(f'Spectrum is average of {out_data.shape[0]} spectra.')
+            header.add_comment('Spectra extracted by optimal method.')
+        else:
+            header.add_comment('Spectrum extracted by optimal method.')
+        header.add_comment('See Horne K., PASP 1986, Vol. 98, p. 609, bibcode: 1986PASP...98..609H')
+        header['DATE-OBS'] = str(min_time)
+        header['DATE-END'] = str(end_time)
+        header['EXPTIME'] = f'{total_exptime:.1f}'
+        jd = (min_time + (end_time - min_time) / 2).jd
+        header['JD'] = f'{jd:.6f}'
+        if header_overrides is not None:
+            for key in header_overrides.keys():
+                header[key] = header_overrides[key]
+
+        out_hdu = fits.PrimaryHDU(out_spectrum, header)
+        output_file = output_path / out_name
+        out_hdu.writeto(output_file, overwrite=True)
+    else:
+        for i in range(0, len(input_files)):
+            out_name = input_files[i].name
+            fits.PrimaryHDU(out_data[i, :], headers[i]).writeto(output_path / out_name, overwrite=True)
     return d_low, d_high
 
 

@@ -23,13 +23,14 @@ class FitsHeaderDialog(wx.Dialog):
             header = hdu_l[0].header
         row_idx = 0
         for item_key in header.keys():
-            if item_key in ('HISTORY', 'COMMENT'):
+            if item_key not in ('HISTORY', 'COMMENT'):
+                FitsHeaderDialog._insert_label_and_text(list_ctrl, row_idx, item_key, header[item_key])
+                row_idx += 1
+        for item_key in ('HISTORY', 'COMMENT'):
+            if item_key in header:
                 for line in header[item_key]:
                     FitsHeaderDialog._insert_label_and_text(list_ctrl, row_idx, item_key, line)
                     row_idx += 1
-            else:
-                FitsHeaderDialog._insert_label_and_text(list_ctrl, row_idx, item_key, header[item_key])
-                row_idx += 1
 
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.Add(list_ctrl, 1, wx.EXPAND, 0)

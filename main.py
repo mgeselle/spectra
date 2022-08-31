@@ -155,7 +155,7 @@ class Main(wx.Frame):
 
             with fits.open(calib_file) as hdu_l:
                 data = hdu_l[0].data
-            peaks = calib.find_peaks(data)
+            peaks, fwhms = calib.find_peaks(data)
             calib_dialog = calib.CalibDialog(self, data, peaks, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 
             def _on_calib_close(calib_show_evt: wx.ShowEvent):
@@ -164,9 +164,25 @@ class Main(wx.Frame):
                 poly = calib_dialog.poly
                 calib_dialog.Destroy()
                 if poly is not None:
-                    calib.apply_calibration(calib_file, poly, output_path)
+                    center = data.size / 2
+                    min_dist = None
+                    prev_peak = None
+                    prev_fwhm = None
+                    for peak, fwhm in zip(peaks, fwhms):
+                        dist = abs(center - peak)
+                        if min_dist is None or dist < min_dist:
+                            min_dist = dist
+                        elif dist > min_dist:
+                            lambda_peak = poly(prev_peak)
+                            delta_lambda = poly(prev_peak + prev_fwhm / 2) - poly(prev_peak - prev_fwhm / 2)
+                            resolution = lambda_peak / delta_lambda
+                            break
+                        prev_peak = peak
+                        prev_fwhm = fwhm
+
+                    calib.apply_calibration(calib_file, poly, output_path, resolution)
                     if pgm_file:
-                        calib.apply_calibration(pgm_file, poly, output_path)
+                        calib.apply_calibration(pgm_file, poly, output_path, resolution)
                 menu.Enable(item, True)
 
             calib_dialog.Bind(wx.EVT_SHOW, _on_calib_close)

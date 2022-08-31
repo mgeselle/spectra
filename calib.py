@@ -347,7 +347,7 @@ class CalibFileDialog(wx.Dialog):
         return self._output_dir
 
 
-def find_peaks(data: npt.NDArray[Any]) -> Union[npt.NDArray[Any], None]:
+def find_peaks(data: npt.NDArray[Any]) -> Union[Tuple[npt.NDArray[Any], Sequence[float]], None]:
     prominence = np.max(data) / 20
     peaks, props = signal.find_peaks(data, prominence=prominence, width=(2, 16))
     center_peak = None
@@ -362,11 +362,13 @@ def find_peaks(data: npt.NDArray[Any]) -> Union[npt.NDArray[Any], None]:
     peaks, props = signal.find_peaks(data, width=(int(fwhm), int(2 * fwhm)))
     prominence = np.max(data) / 30
     result = []
+    fwhms = []
     for peak_no in range(0, peaks.shape[0]):
         if props['prominences'][peak_no] >= prominence:
-            peak, _ = fit_peak(data, peaks[peak_no], props['widths'][peak_no])
+            peak, fwhm = fit_peak(data, peaks[peak_no], props['widths'][peak_no])
             result.append(peak)
-    return np.array(result)
+            fwhms.append(fwhm)
+    return np.array(result), fwhms
 
 
 def fit_peak(data: npt.NDArray[Any], peak, width):
@@ -567,7 +569,8 @@ class CalibDialog(wx.Dialog):
             self._grid.SetCellValue(nonzero[i], 1, f'{residual[i]:.3f}')
 
 
-def apply_calibration(input_path: Path, calib: Callable[[npt.NDArray], npt.NDArray], output_path: Path):
+def apply_calibration(input_path: Path, calib: Callable[[npt.NDArray], npt.NDArray], output_path: Path,
+                      resolution: Union[float, None]):
     with fits.open(input_path) as in_hdu_l:
         header = in_hdu_l[0].header
         data = in_hdu_l[0].data
@@ -592,7 +595,9 @@ def apply_calibration(input_path: Path, calib: Callable[[npt.NDArray], npt.NDArr
     header['CRVAL1'] = in_wl[0]
     header['CDELT1'] = wl_step
     header['CTYPE1'] = 'Wavelength'
-    header['CUNIT1'] = 'angstrom'
+    header['CUNIT1'] = 'Angstrom'
+    if resolution:
+        header['AAV_ITRP'] = int(resolution)
 
     out_hdu = fits.PrimaryHDU(data=out_data, header=header)
     out_hdu.writeto(output_path / input_path.name, overwrite=True)
@@ -616,7 +621,7 @@ if __name__ == '__main__':
     def show_calib_dialog(calib_file: Path, pgm_file: Path, output_path: Path, calib_btn: wx.Button):
         with fits.open(calib_file) as in_hdu_l:
             data = in_hdu_l[0].data
-        peaks = find_peaks(data)
+        peaks, _ = find_peaks(data)
         calib_dlg = CalibDialog(frame, data, peaks, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 
         def on_calib_show(evt: wx.ShowEvent):
@@ -625,9 +630,9 @@ if __name__ == '__main__':
             l_poly = calib_dlg.poly
             calib_dlg.Destroy()
             if poly is not None:
-                apply_calibration(calib_file, l_poly, output_path)
+                apply_calibration(calib_file, l_poly, output_path, None)
                 if pgm_file is not None:
-                    apply_calibration(pgm_file, l_poly, output_path)
+                    apply_calibration(pgm_file, l_poly, output_path, None)
             calib_btn.Enable()
 
         calib_dlg.Bind(wx.EVT_SHOW, on_calib_show)

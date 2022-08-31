@@ -302,8 +302,8 @@ class Reduce(TaskDialog):
         progress += slt_budget
         ext_budget = budget - 2 * slt_budget
         ex_o_input = [slt_output / f.name for f in pgm_files]
-        d_lo, d_hi = ex_optimal(ex_o_input, cfg_name, output_path, self.send_progress,
-                                ext_budget, progress)
+        d_lo, d_hi = ex_optimal(ex_o_input, cfg_name, output_path, callback=self.send_progress,
+                                budget=ext_budget, start_with=progress)
         if not self.cancel_flag.is_set():
             calib_slt_corrected = slt_output / calib_file.name
             ex_simple(calib_slt_corrected, (d_lo, d_hi), output_path)
