@@ -11,7 +11,7 @@ import response
 import util
 import wxutil
 from combine import Combine
-from configgui import CamCfgGUI
+from configgui import CamCfgGUI, TelescopeCfgGui, SpectrometerCfgGui, AavsoCfgGui, LocationCfgGui
 from crop import Crop
 from imgdisplay import ImageDisplay
 from reduce import Reduce
@@ -52,7 +52,11 @@ class Main(wx.Frame):
         menubar.Append(self._spec_ops_menu, '&Spectrum Ops')
 
         self._config_menu = wx.Menu()
+        telescope_item = self._config_menu.Append(wx.ID_ANY, '&Telescope')
+        spectro_item = self._config_menu.Append(wx.ID_ANY, '&Spectrometer')
         camera_item = self._config_menu.Append(ID_CFG_CAMERA.GetId(), '&Camera')
+        aavso_item = self._config_menu.Append(wx.ID_ANY, 'AAVSO Equipment &Package')
+        loc_item = self._config_menu.Append(wx.ID_ANY, '&Location')
         calib_cfg_item = self._config_menu.Append(ID_CFG_CALIB.GetId(), 'C&alibration')
         menubar.Append(self._config_menu, '&Configuration')
 
@@ -78,7 +82,11 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, self._show_calib_file_dialog, calib_item)
         self.Bind(wx.EVT_MENU, self._run_calc_response, calc_resp_item)
         self.Bind(wx.EVT_MENU, self._run_apply_response, apply_resp_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, TelescopeCfgGui(self)), telescope_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, SpectrometerCfgGui(self)), spectro_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, AavsoCfgGui(self)), aavso_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, LocationCfgGui(self)), loc_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
 
         display = wx.Display()
