@@ -550,6 +550,50 @@ class LocationCfgGui(wx.Dialog):
             self.Show(False)
 
 
+class AavsoObscodeCfgGui(wx.Dialog):
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.SetTitle('AAVSO Observer Code')
+
+        panel = wx.Panel(self)
+        obs_label = wx.StaticText(panel, label='Observer Code:')
+        self._obs_entry = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._obs_entry, 10)
+        self._obs_entry.SetValue(Config.get().get_aavso_obscode())
+
+        grid = wx.FlexGridSizer(rows=1, cols=2, hgap=5, vgap=5)
+        grid.Add(obs_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        grid.Add(self._obs_entry, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+
+        btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(grid, 0, wx.ALL | wx.EXPAND, 10)
+        vbox.Add(btn_sizer, 0, wx.TOP | wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 10)
+
+        self.Bind(wx.EVT_BUTTON, self._save_or_cancel)
+
+        panel.SetSizer(vbox)
+        panel.Fit()
+
+        sz = panel.GetBestSize()
+        self.SetClientSize(sz)
+        self.Layout()
+        sz = self.GetBestSize()
+        self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
+
+    def _save_or_cancel(self, event: wx.CommandEvent):
+        ev_id = event.GetId()
+        if ev_id == wx.ID_OK:
+            obscode = self._obs_entry.GetValue().strip()
+            Config.get().set_aavso_obscode(obscode)
+            rc = wx.OK
+        else:
+            rc = wx.CANCEL
+        if self.IsModal():
+            self.EndModal(rc)
+        else:
+            self.Show(False)
+
 if __name__ == '__main__':
     app = wx.App()
     app.SetAppName('spectra')
@@ -563,12 +607,14 @@ if __name__ == '__main__':
     spec_button = wx.Button(pnl, id=id_ref.GetId(), label='Run Spectrometer Config')
     aav_button = wx.Button(pnl, id=id_ref.GetId(), label='Run AAVSO Config')
     loc_button = wx.Button(pnl, id=id_ref.GetId(), label='Run Location Config')
+    obs_button = wx.Button(pnl, id=id_ref.GetId(), label='Run Observer Config')
     sizer = wx.BoxSizer(wx.VERTICAL)
     sizer.Add(cam_button, 0, wx.EXPAND, 3)
     sizer.Add(tel_button, 0, wx.EXPAND, 3)
     sizer.Add(spec_button, 0, wx.EXPAND, 3)
     sizer.Add(aav_button, 0, wx.EXPAND, 3)
     sizer.Add(loc_button, 0, wx.EXPAND, 3)
+    sizer.Add(obs_button, 0, wx.EXPAND, 3)
     pnl.SetSizer(sizer)
     pnl.Fit()
     sz = pnl.GetBestSize()
@@ -592,6 +638,9 @@ if __name__ == '__main__':
                 dlg.ShowModal()
         elif src == loc_button:
             with LocationCfgGui(frame) as dlg:
+                dlg.ShowModal()
+        elif src == obs_button:
+            with AavsoObscodeCfgGui(frame) as dlg:
                 dlg.ShowModal()
 
     frame.Bind(wx.EVT_BUTTON, _on_btn)

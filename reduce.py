@@ -1,7 +1,7 @@
 import itertools
 from pathlib import Path
 import tempfile
-from typing import Union, Sequence, Iterable, Callable
+from typing import Union, Sequence, Iterable, Callable, Dict
 import wx
 
 import flat
@@ -78,14 +78,26 @@ class Reduce(TaskDialog):
         self._pgm_text = wx.TextCtrl(panel)
         wxutil.size_text_by_chars(self._pgm_text, text_chars)
 
-        cam_cfg_label = wx.StaticText(panel, wx.ID_ANY, 'Camera Configuration:')
-        config_values = Config.get().get_camera_configs()
-        self._cam_cfg_combo = wx.ComboBox(panel, value=config_values[0], choices=config_values,
-                                          style=wx.CB_DROPDOWN | wx.CB_READONLY)
-        wxutil.size_text_by_chars(self._cam_cfg_combo, 30)
+        eq_cfg_label = wx.StaticText(panel, wx.ID_ANY, 'Equipment Configuration:')
+        config_values = ['']
+        config_values[1:] = Config.get().get_aavso_config_names()
+        self._eq_cfg_combo = wx.ComboBox(panel, value=config_values[0], choices=config_values,
+                                         style=wx.CB_DROPDOWN | wx.CB_READONLY | wx.CB_SORT)
+        wxutil.size_text_by_chars(self._eq_cfg_combo, 30)
+
+        loc_label = wx.StaticText(panel, wx.ID_ANY, 'Location Name:')
+        loc_values = ['']
+        loc_values[1:] = Config.get().get_location_names()
+        self._loc_combo = wx.ComboBox(panel, value=loc_values[0], choices=loc_values,
+                                      style=wx.CB_DROPDOWN | wx.CB_READONLY | wx.CB_SORT)
+        wxutil.size_text_by_chars(self._loc_combo, 30)
+
+        obj_label = wx.StaticText(panel, wx.ID_ANY, 'Object:')
+        self._obj_entry = wx.TextCtrl(panel)
+        wxutil.size_text_by_chars(self._obj_entry, text_chars)
 
         vbox = wx.BoxSizer(wx.VERTICAL)
-        grid = wx.FlexGridSizer(rows=9, cols=2, hgap=5, vgap=5)
+        grid = wx.FlexGridSizer(rows=11, cols=2, hgap=5, vgap=5)
         grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(in_dir_sizer, 1, wx.ALIGN_LEFT)
         grid.Add(master_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -102,8 +114,12 @@ class Reduce(TaskDialog):
         grid.Add(self._calib_text, 1, wx.ALIGN_LEFT)
         grid.Add(pgm_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._pgm_text, 1, wx.ALIGN_LEFT)
-        grid.Add(cam_cfg_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self._cam_cfg_combo, 1, wx.ALIGN_LEFT)
+        grid.Add(eq_cfg_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._eq_cfg_combo, 1, wx.ALIGN_LEFT)
+        grid.Add(loc_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._loc_combo, 1, wx.ALIGN_LEFT)
+        grid.Add(obj_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._obj_entry, 1, wx.ALIGN_LEFT)
 
         btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
 
@@ -190,7 +206,21 @@ class Reduce(TaskDialog):
         output_path = wxutil.create_dir(output_dir, 'output', self)
         if not output_path:
             return
-        cfg_name = self._cam_cfg_combo.GetValue()
+        eq_cfg_name = self._eq_cfg_combo.GetValue()
+        eq_cfg = Config.get().get_aavso_config(eq_cfg_name)
+        cam_cfg_name = eq_cfg.ccd
+        header_overrides = dict()
+        header_overrides['AAV_INST'] = eq_cfg_name
+
+        obj_name = self._obj_entry.GetValue().strip()
+        if obj_name:
+            header_overrides['OBJNAME'] = obj_name
+        obscode = Config.get().get_aavso_obscode()
+        if obscode:
+            header_overrides['OBSERVER'] = obscode
+        loc_name = self._loc_combo.GetValue()
+        if loc_name:
+            header_overrides['AAV_SITE'] = loc_name
 
         dark_output = Path(tempfile.mkdtemp(dir=output_path))
         pgm_out = [dark_output / f.name for f in pgm_files]
@@ -201,7 +231,7 @@ class Reduce(TaskDialog):
             flat_out = dark_output / flat_file.name
 
             def dark_completion():
-                self._reduce_flat(flat_out, calib_out, pgm_out, output_path, cfg_name)
+                self._reduce_flat(flat_out, calib_out, pgm_out, output_path, cam_cfg_name, header_overrides)
 
             self.completion_callback = dark_completion
             self.auto_hide = True
@@ -215,7 +245,8 @@ class Reduce(TaskDialog):
         else:
 
             def dark_continue():
-                self._reduce_1d(calib_out, pgm_out, output_path, cfg_name, budget=50, start_with=50)
+                self._reduce_1d(calib_out, pgm_out, output_path, cam_cfg_name, header_overrides,
+                                budget=50, start_with=50)
 
             dark_args.append(dark_continue)
 
@@ -256,7 +287,7 @@ class Reduce(TaskDialog):
             continuation()
 
     def _reduce_flat(self, flat_file: Path, calib_file: Path, pgm_files: Sequence[Path], output_path: Path,
-                     cfg_name: str):
+                     cfg_name: str, header_overrides: Dict[str, str]):
         flat_dlg = FlatDialog(self, flat_file)
 
         def on_flat_hide(evt: wx.ShowEvent):
@@ -279,14 +310,14 @@ class Reduce(TaskDialog):
             self.completion_callback = None
             self.auto_hide = False
 
-            reduce1d_params = (calib_out, pgm_out, output_path, cfg_name)
+            reduce1d_params = (calib_out, pgm_out, output_path, cfg_name, header_overrides)
             self.run_task(100, self._reduce_1d, reduce1d_params)
 
         flat_dlg.Bind(wx.EVT_SHOW, on_flat_hide)
         flat_dlg.Show()
 
     def _reduce_1d(self, calib_file: Path, pgm_files: Sequence[Path], output_path: Path,
-                   cfg_name:str, budget: int = 100, start_with: int = 0):
+                   cfg_name: str, header_overrides: Dict[str, str], budget: int = 100, start_with: int = 0):
         progress = start_with
         self.send_progress(progress, 'Applying slant correction...')
         slt = Slant(calib_file)
@@ -303,7 +334,7 @@ class Reduce(TaskDialog):
         ext_budget = budget - 2 * slt_budget
         ex_o_input = [slt_output / f.name for f in pgm_files]
         d_lo, d_hi = ex_optimal(ex_o_input, cfg_name, output_path, callback=self.send_progress,
-                                budget=ext_budget, start_with=progress)
+                                header_overrides=header_overrides, budget=ext_budget, start_with=progress)
         if not self.cancel_flag.is_set():
             calib_slt_corrected = slt_output / calib_file.name
             ex_simple(calib_slt_corrected, (d_lo, d_hi), output_path)

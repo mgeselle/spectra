@@ -11,7 +11,7 @@ import response
 import util
 import wxutil
 from combine import Combine
-from configgui import CamCfgGUI, TelescopeCfgGui, SpectrometerCfgGui, AavsoCfgGui, LocationCfgGui
+from configgui import CamCfgGUI, TelescopeCfgGui, SpectrometerCfgGui, AavsoCfgGui, LocationCfgGui, AavsoObscodeCfgGui
 from crop import Crop
 from imgdisplay import ImageDisplay
 from reduce import Reduce
@@ -56,6 +56,7 @@ class Main(wx.Frame):
         spectro_item = self._config_menu.Append(wx.ID_ANY, '&Spectrometer')
         camera_item = self._config_menu.Append(ID_CFG_CAMERA.GetId(), '&Camera')
         aavso_item = self._config_menu.Append(wx.ID_ANY, 'AAVSO Equipment &Package')
+        obs_item = self._config_menu.Append(wx.ID_ANY, 'AAVSO &Observer Code')
         loc_item = self._config_menu.Append(wx.ID_ANY, '&Location')
         calib_cfg_item = self._config_menu.Append(ID_CFG_CALIB.GetId(), 'C&alibration')
         menubar.Append(self._config_menu, '&Configuration')
@@ -86,6 +87,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, SpectrometerCfgGui(self)), spectro_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, CamCfgGUI(self)), camera_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, AavsoCfgGui(self)), aavso_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, AavsoObscodeCfgGui(self)), obs_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, LocationCfgGui(self)), loc_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
 
@@ -188,6 +190,7 @@ class Main(wx.Frame):
                         prev_peak = peak
                         prev_fwhm = fwhm
 
+                    # noinspection PyUnboundLocalVariable
                     calib.apply_calibration(calib_file, poly, output_path, resolution)
                     if pgm_file:
                         calib.apply_calibration(pgm_file, poly, output_path, resolution)

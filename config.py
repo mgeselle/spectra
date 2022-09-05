@@ -322,6 +322,33 @@ class Config:
     def get_aavso_config_names(self) -> List[str]:
         return self._get_config_names('/Aavso')
 
+    def get_aavso_obscode(self) -> str:
+        self._lock.acquire()
+        old_path = None
+        try:
+            old_path = self._cd_cfg_path('/Global')
+            if self._config.Exists('obscode'):
+                return self._config.Read('obscode')
+            else:
+                return ''
+        finally:
+            self._config.SetPath(old_path)
+            self._lock.release()
+
+    def set_aavso_obscode(self, obscode: str):
+        self._lock.acquire()
+        old_path = None
+        try:
+            old_path = self._cd_cfg_path('/Global')
+            if not obscode and self._config.Exists('obscode'):
+                self._config.DeleteEntry('obscode', False)
+            elif obscode:
+                self._config.Write('obscode', obscode)
+            self._config.Flush()
+        finally:
+            self._config.SetPath(old_path)
+            self._lock.release()
+
     def _get_config_names(self, parent_path: str) -> List[str]:
         result = []
         self._lock.acquire()
