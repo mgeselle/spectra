@@ -2,10 +2,12 @@ import astropy.constants as ac
 import astropy.io.fits as fits
 import astropy.units as u
 import numpy as np
+import numpy.linalg as npl
 import numpy.ma as ma
 import numpy.polynomial as npp
 import numpy.typing as npt
 import scipy.optimize as sco
+import scipy.signal as scs
 import config
 
 from astropy.coordinates import EarthLocation, SkyCoord
@@ -20,7 +22,7 @@ def resample_ref(rec_header: fits.Header, ref_header: fits.Header, ref_data: npt
     """Resamples a reference spectrum to match a recorded one in wavelength range and sampling.
 
     The reference spectrum is first Doppler-shifted to match the position of the spectral
-    features to the recorded one. This relies on the header keywords SITELAT, SITELONG, and
+    features to the recorded one. This relies on the header keywords AAV_SITE or SITELAT, SITELONG, and
     DATE_OBS in the header of the recorded spectrum.
     The object position is looked up from Simbad using the OBJECT header card from the reference file.
 
@@ -38,7 +40,6 @@ def resample_ref(rec_header: fits.Header, ref_header: fits.Header, ref_data: npt
         location = EarthLocation.from_geodetic(rec_header['SITELONG'] * u.deg, rec_header['SITELAT'] * u.deg)
     else:
         raise ValueError('No coordinate info in recorded FITS file')
-
 
     obs_time = Time(rec_header['DATE-OBS'], format='isot', scale='utc')
 
@@ -161,7 +162,7 @@ def fit_continuum(data: npt.NDArray[Any], lambda_start: float, lambda_step: floa
     return np.asarray(poly(xdata))
 
 
-def create_response(rec_file: Path, ref_file: Path, output_path: Path):
+def create_response(rec_file: Path, ref_file: Path, output_path: Path, mode='cont'):
     with fits.open(rec_file) as hdu:
         rec_header = hdu[0].header
         rec_data = hdu[0].data
@@ -175,9 +176,10 @@ def create_response(rec_file: Path, ref_file: Path, output_path: Path):
     ref_resampled = resample_ref(rec_header, ref_header, ref_data)
     ref_resampled = fit_ref_to_recorded(ref_resampled, rec_data)
 
-    rec_continuum = fit_continuum(rec_data, rec_lambda_start, rec_step)
-    ref_continuum = fit_continuum(ref_resampled, rec_lambda_start, rec_step)
-    response = rec_continuum / ref_continuum
+    if mode == 'filt':
+        response = _compute_response_filt(rec_data, ref_resampled, rec_lambda_start, rec_step)
+    else:
+        response = _compute_response_cont(rec_data, ref_resampled, rec_lambda_start, rec_step)
 
     resp_header = fits.Header()
     resp_header.add_comment(rec_header['COMMENT'][0])
@@ -195,10 +197,49 @@ def create_response(rec_file: Path, ref_file: Path, output_path: Path):
     corr_data = rec_data / response
     corr_header = fits.Header(rec_header, copy=True)
     corr_header.add_comment('Response-corrected using Spectra.')
-    max_idx = ref_continuum.argmax()
+    max_idx = corr_data.argmax()
     corr_data = corr_data / corr_data[max_idx]
 
     fits.PrimaryHDU(corr_data, corr_header).writeto(output_path / rec_file.name, overwrite=True)
+
+
+def _compute_response_cont(rec_data: npt.NDArray[Any], ref_data: npt.NDArray[Any],
+                           rec_lambda_start: float, rec_lambda_step: float) -> npt.NDArray[Any]:
+    # Don't try to de-oxygenate the spectrum but rather replace the big peak
+    # between 6863 and 6968 by a linear section.
+    rec_lambda_end = rec_lambda_start + (rec_data.size - 1) * rec_lambda_step
+    rec_data_cpy = None
+    if rec_lambda_end > 6863 > rec_lambda_start:
+        # O2 peak is in spectrum
+        idx_6863 = int((6863 - rec_lambda_start) / rec_lambda_step)
+        no_steps = idx_6863
+        if no_steps > 9:
+            no_steps = 9
+        if no_steps > 2:
+            x_data = np.linspace(rec_lambda_start + (idx_6863 - no_steps) * rec_lambda_step,
+                                 rec_lambda_start + idx_6863 * rec_lambda_step, no_steps + 1)
+            y_data = rec_data[idx_6863 - no_steps:idx_6863 + 1]
+            A = np.vstack([x_data, np.ones(x_data.size)]).T
+            m, c = npl.lstsq(A, y_data, rcond=None)[0]
+            end_idx = int((6968 - rec_lambda_start) / rec_lambda_step)
+            if end_idx > rec_data.size:
+                end_idx = rec_data.size
+            lambda_x = rec_lambda_start + idx_6863 * rec_lambda_step
+            rec_data_cpy = np.copy(rec_data)
+            for i in range(idx_6863, end_idx):
+                rec_data_cpy[i] = m * lambda_x + c
+                lambda_x += rec_lambda_step
+    if rec_data_cpy is None:
+        rec_data_cpy = rec_data
+    rec_continuum = fit_continuum(rec_data_cpy, rec_lambda_start, rec_lambda_step)
+    ref_continuum = fit_continuum(ref_data, rec_lambda_start, rec_lambda_step)
+    return rec_continuum / ref_continuum
+
+
+def _compute_response_filt(rec_data: npt.NDArray[Any], ref_data: npt.NDArray[Any],
+                           rec_lambda_start: float, rec_lambda_step: float) -> npt.NDArray[Any]:
+    raw_response = rec_data / ref_data
+    return scs.medfilt(raw_response, 31)
 
 
 def apply_response(resp_path: Path, pgm_path: Path, output_path: Path):
@@ -263,7 +304,7 @@ if __name__ == '__main__':
     rec = list(in_dir.glob('Castor_L*'))[0]
     ref = list(in_dir.glob('Castor-M*'))[0]
 
-    create_response(rec, ref, out_dir)
+    create_response(rec, ref, out_dir, mode='cont')
 
     with fits.open(out_dir / rec.name) as r_hdu:
         r_data = r_hdu[0].data
