@@ -14,7 +14,7 @@ class Specview(wx.Panel):
         self._fig = Figure()
         self._axes = self._fig.add_subplot(111)
         self._axes.set_xlabel('Pixels')
-        self._axes.set_ylabel('Flux [ADU]')
+        self._axes.set_ylabel('Relative Intensity')
         self._lines = dict()
         self._xdata = None
         self._line_id = 0
@@ -32,6 +32,7 @@ class Specview(wx.Panel):
         self._picking_pi_cid = None
         self._picking_line = dict()
         self._picked_x = None
+        self._current_max = None
 
     def add_spectrum(self, data: npt.NDArray[Any], lambda_ref: Union[None, float] = None,
                      lambda_step: Union[None, float] = None, fmt: str = '-b', unit: str = u'\u00c5') -> str:
@@ -44,7 +45,6 @@ class Specview(wx.Panel):
                                           lambda_ref + (data.shape[0] - 1) * lambda_step,
                                           data.shape[0])
                 self._axes.set_xlabel(unit)
-
         return self.add_markers(self._xdata, data, fmt=fmt)
 
     def add_markers(self, xdata: npt.NDArray[Any], ydata: npt.NDArray[any], fmt: str = 'or',
@@ -58,6 +58,9 @@ class Specview(wx.Panel):
             self._lines[line_id].set_data(xdata, ydata)
         self._axes.autoscale()
         self._canvas.draw()
+        data_max = np.max(ydata)
+        if self._current_max is None or data_max > self._current_max:
+            self._current_max = data_max
 
         return line_id
 
@@ -71,6 +74,7 @@ class Specview(wx.Panel):
         self._axes.relim()
         self._canvas.draw()
         self._xdata = None
+        self._current_max = None
 
     def set_spectrum_data(self, spec_id: str, data: npt.NDArray[Any]):
         if spec_id not in self._lines:
@@ -100,6 +104,10 @@ class Specview(wx.Panel):
         if event.inaxes != self._axes:
             return
         self._picking_cb(event.xdata, event.key == 'shift')
+
+    @property
+    def current_max(self):
+        return self._current_max
 
 
 if __name__ == '__main__':

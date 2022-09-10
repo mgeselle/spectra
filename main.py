@@ -1,3 +1,4 @@
+import numpy as np
 import sys
 from pathlib import Path
 from typing import Tuple
@@ -18,6 +19,7 @@ from reduce import Reduce
 from specview import Specview
 
 ID_OPEN = wx.NewIdRef()
+ID_ADD_SP = wx.NewIdRef()
 ID_COMBINE = wx.NewIdRef()
 ID_CROP = wx.NewIdRef()
 ID_REDUCE = wx.NewIdRef()
@@ -34,6 +36,8 @@ class Main(wx.Frame):
 
         self._file_menu = wx.Menu()
         open_item = self._file_menu.Append(ID_OPEN.GetId(), '&Open File...')
+        add_sp_item = self._file_menu.Append(ID_ADD_SP.GetId(), '&Add Spectrum...')
+        self._file_menu.Enable(ID_ADD_SP.GetId(), False)
         header_item = self._file_menu.Append(wx.ID_ANY, 'Show &Header')
         self._file_menu.AppendSeparator()
         exit_item = self._file_menu.Append(wx.ID_EXIT)
@@ -75,6 +79,7 @@ class Main(wx.Frame):
         self._specview_visible = True
 
         self.Bind(wx.EVT_MENU, self._open, open_item)
+        self.Bind(wx.EVT_MENU, self._add_spectrum, add_sp_item)
         self.Bind(wx.EVT_MENU, self._show_header, header_item)
         self.Bind(wx.EVT_MENU, lambda evt: sys.exit(0), exit_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Combine(self)), combine_item)
@@ -106,8 +111,8 @@ class Main(wx.Frame):
         sizer.Layout()
         self._specview_visible = visible
 
-    # noinspection PyUnusedLocal
-    def _open(self, event: wx.Event):
+    def _open(self, event: wx.CommandEvent):
+        menu = event.GetEventObject()
         file_name = wxutil.select_file(self)
         if not file_name:
             return
@@ -130,10 +135,35 @@ class Main(wx.Frame):
                 self._specview.add_spectrum(disp_data, lambda_ref, lambda_step)
             else:
                 self._specview.add_spectrum(disp_data)
+            menu.Enable(ID_ADD_SP.GetId(), True)
         elif header['NAXIS'] == 2:
             data = None
             self.make_specview_visible(False)
             self._image_display.display(file_name)
+            menu.Enable(ID_ADD_SP.GetId(), False)
+
+    def _add_spectrum(self, event: wx.CommandEvent):
+        file_name = wxutil.select_file(self)
+        if not file_name:
+            return
+        file_path = Path(file_name)
+        with fits.open(file_path) as hdu_l:
+            data = hdu_l[0].data
+            header = hdu_l[0].header
+        if header['NAXIS'] != 1 and data.shape[0] != 1:
+            return
+        if 'CRVAL1' not in header:
+            return
+        if data.shape[0] == 1:
+            data = data[0, :]
+        data_max = np.max(data)
+        if data_max != 1.0:
+            data = data / data_max
+        data = data + (self._specview.current_max - 0.9)
+        lambda_step = header['CDELT1']
+        lambda_start = header['CRVAL1'] + (1 - header['CRPIX1']) * lambda_step
+        x_data = np.linspace(lambda_start, lambda_start + (data.size - 1) * lambda_step, data.size)
+        self._specview.add_markers(x_data, data, fmt='-b')
 
     def _show_header(self, event: wx.CommandEvent):
         menu, item = Main._disable_before_open(event)
