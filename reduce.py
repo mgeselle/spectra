@@ -1,7 +1,6 @@
-import itertools
 from pathlib import Path
 import tempfile
-from typing import Union, Sequence, Iterable, Callable, Dict
+from typing import Union, Sequence, Dict
 import wx
 
 import flat
@@ -9,7 +8,6 @@ from config import Config
 from dark import Dark
 from extract import optimal as ex_optimal
 from extract import simple as ex_simple
-from flat import FlatDialog
 from taskdialog import TaskDialog
 from rotate import Rotate
 from slant import Slant
@@ -139,21 +137,25 @@ class Reduce(TaskDialog):
         self.Bind(wx.EVT_BUTTON, self._do_reduce, id=wx.ID_OK)
         self.Bind(wx.EVT_BUTTON, self.on_cancel, id=wx.ID_CANCEL)
 
+    # noinspection PyUnusedLocal
     def _get_input_dir(self, event: wx.CommandEvent) -> None:
         in_dir = wxutil.select_dir(self, True)
         if in_dir:
             self._in_dir_text.SetValue(in_dir)
 
+    # noinspection PyUnusedLocal
     def _get_output_dir(self, event: wx.CommandEvent) -> None:
         out_dir = wxutil.select_dir(self, False)
         if out_dir:
             self._output_dir_text.SetValue(out_dir)
 
+    # noinspection PyUnusedLocal
     def _get_master_dir(self, event: wx.CommandEvent) -> None:
         mst_dir = wxutil.select_dir(self, True)
         if mst_dir:
             self._master_dir_text.SetValue(mst_dir)
 
+    # noinspection PyUnusedLocal
     def _do_reduce(self, event: wx.CommandEvent) -> None:
         input_dir = self._in_dir_text.GetValue().strip()
         if not input_dir:
@@ -222,128 +224,94 @@ class Reduce(TaskDialog):
         if loc_name:
             header_overrides['AAV_SITE'] = loc_name
 
-        dark_output = Path(tempfile.mkdtemp(dir=output_path))
-        pgm_out = [dark_output / f.name for f in pgm_files]
-        flat_and_calib = [calib_path]
-        calib_out = dark_output / calib_path.name
-        if flat_file:
-            flat_and_calib.append(flat_file)
-            flat_out = dark_output / flat_file.name
-
-            def dark_completion():
-                self._reduce_flat(flat_out, calib_out, pgm_out, output_path, cam_cfg_name, header_overrides)
-
-            self.completion_callback = dark_completion
-            self.auto_hide = True
-        else:
-            flat_out = None
-
-        dark_input = itertools.chain(pgm_files, flat_and_calib)
-        dark_args = [bias_path, dark_files, dark_input, dark_output]
-        if flat_file:
-            dark_args.append(None)
-        else:
-
-            def dark_continue():
-                self._reduce_1d(calib_out, pgm_out, output_path, cam_cfg_name, header_overrides,
-                                budget=50, start_with=50)
-
-            dark_args.append(dark_continue)
+        dark_args = [bias_path, dark_files, flat_file, pgm_files, calib_path, output_path, cam_cfg_name,
+                     header_overrides]
 
         progress_limit = 100
         self.run_task(progress_limit, self._reduce_dark, dark_args)
 
-    def _reduce_dark(self, bias_path: Path, dark_files: Sequence[Path], files: Iterable[Path],
-                     output_path: Path, continuation: Union[Callable[[], None], None]):
-        total_budget = 100
-        if continuation:
-            total_budget /= 2
-        half_budget = int(total_budget / 2)
+    def _reduce_dark(self, bias_path: Path, dark_files: Sequence[Path], flat_path: Path,
+                     pgm_files: Union[Path, Sequence[Path]],
+                     calib_file: Path, output_path: Path, cfg_name: str, header_overrides: Dict[str, str]):
+        if flat_path:
+            budget_step = 20
+        else:
+            budget_step = 25
+        progress = 0
+
+        if isinstance(pgm_files, Path):
+            pgm_files = (pgm_files, )
 
         self.send_progress(0, 'Applying dark correction.')
         dark = Dark(bias_path, dark_files)
         if self.cancel_flag.is_set():
             return
-        # output_path is a temporary directory under the output dir.
-        # Create another temporary directory under the output dir.
-        dark_output = Path(tempfile.mkdtemp(dir=output_path.parent))
-        file_list = list(files)
-        dark.correct(file_list, dark_output, self.send_progress, budget=half_budget, start_with=0)
+        # Create temporary directory under the output dir.
+        dark_output = Path(tempfile.mkdtemp(dir=output_path))
+        file_list = list(pgm_files)
+        file_list.append(calib_file)
+        if flat_path:
+            file_list.append(flat_path)
+        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress)
         if self.cancel_flag.is_set():
             util.remove_dir_recursively(dark_output)
             return
+        progress += budget_step
 
+        rotate_output = Path(tempfile.mkdtemp(dir=output_path))
         dark_corrected = [dark_output / f.name for f in file_list]
-        self.send_progress(half_budget, 'Rotating files.')
+        self.send_progress(progress, 'Rotating files.')
         rot = Rotate(file_list[0])
         if self.cancel_flag.is_set():
             util.remove_dir_recursively(dark_output)
-            util.remove_dir_recursively(output_path)
             return
-        rot.rotate(dark_corrected, output_path, self.send_progress, budget=half_budget, start_with=half_budget)
+        rot.rotate(dark_corrected, rotate_output, self.send_progress, budget=budget_step - 1, start_with=progress)
         util.remove_dir_recursively(dark_output)
-
-        if continuation:
-            continuation()
-
-    def _reduce_flat(self, flat_file: Path, calib_file: Path, pgm_files: Sequence[Path], output_path: Path,
-                     cfg_name: str, header_overrides: Dict[str, str]):
-        flat_dlg = FlatDialog(self, flat_file)
-
-        def on_flat_hide(evt: wx.ShowEvent):
-            if evt.IsShown():
-                evt.Skip()
-                return
-            flat_param = flat_dlg.result
-            flat_dlg.Destroy()
-            if flat_param:
-                flat_output = Path(tempfile.mkdtemp(dir=output_path))
-                flat_input = [calib_file]
-                flat_input.extend(pgm_files)
-                flat.apply(flat_param, flat_input, flat_output)
-                calib_out = flat_output / calib_file.name
-                pgm_out = [flat_output / f.name for f in pgm_files]
-                util.remove_dir_recursively(calib_file.parent)
-            else:
-                calib_out = calib_file
-                pgm_out = pgm_files
-            self.completion_callback = None
-            self.auto_hide = False
-
-            reduce1d_params = (calib_out, pgm_out, output_path, cfg_name, header_overrides)
-            self.run_task(100, self._reduce_1d, reduce1d_params)
-
-        flat_dlg.Bind(wx.EVT_SHOW, on_flat_hide)
-        flat_dlg.Show()
-
-    def _reduce_1d(self, calib_file: Path, pgm_files: Sequence[Path], output_path: Path,
-                   cfg_name: str, header_overrides: Dict[str, str], budget: int = 100, start_with: int = 0):
-        progress = start_with
-        self.send_progress(progress, 'Applying slant correction...')
-        slt = Slant(calib_file)
-        slt_output = Path(tempfile.mkdtemp(dir=output_path))
-        slt_input = [calib_file]
-        slt_input.extend(pgm_files)
-        slt_budget = int(budget / 10)
-        slt.apply(slt_input, slt_output)
-        util.remove_dir_recursively(calib_file.parent)
         if self.cancel_flag.is_set():
-            util.remove_dir_recursively(slt_output)
+            util.remove_dir_recursively(rotate_output)
             return
-        progress += slt_budget
-        ext_budget = budget - 2 * slt_budget
-        ex_o_input = [slt_output / f.name for f in pgm_files]
+        progress += budget_step
+
+        if flat_path:
+            slant_input = Path(tempfile.mkdtemp(dir=output_path))
+            flat_path = rotate_output / flat_path.name
+            flat_input = [rotate_output / x.name for x in pgm_files]
+            flat_input.append(rotate_output / calib_file.name)
+            self.send_progress(progress, 'Applying flat correction.')
+            flat.auto_flat(flat_path, flat_input, slant_input)
+            util.remove_dir_recursively(rotate_output)
+            if self.cancel_flag.is_set():
+                util.remove_dir_recursively(slant_input)
+                return
+            progress += budget_step
+        else:
+            slant_input = rotate_output
+
+        self.send_progress(progress, 'Applying slant correction...')
+        calib_file = slant_input / calib_file.name
+        slt = Slant(calib_file)
+        slant_output = Path(tempfile.mkdtemp(dir=output_path))
+        slt_input_files = [calib_file]
+        slt_input_files.extend([slant_input / x.name for x in pgm_files])
+        slt.apply(slt_input_files, slant_output)
+        util.remove_dir_recursively(slant_input)
+        if self.cancel_flag.is_set():
+            util.remove_dir_recursively(slant_output)
+            return
+        progress += budget_step
+
+        ex_o_input = [slant_output / f.name for f in pgm_files]
         d_lo, d_hi = ex_optimal(ex_o_input, cfg_name, output_path, callback=self.send_progress,
-                                header_overrides=header_overrides, budget=ext_budget, start_with=progress)
+                                header_overrides=header_overrides, budget=budget_step - 1, start_with=progress)
         if not self.cancel_flag.is_set():
-            calib_slt_corrected = slt_output / calib_file.name
+            calib_slt_corrected = slant_output / calib_file.name
             ex_simple(calib_slt_corrected, (d_lo, d_hi), output_path)
             simple_path = output_path / 'simple'
             simple_path.mkdir(exist_ok=True)
             ex_simple(ex_o_input, (d_lo, d_hi), simple_path)
-        util.remove_dir_recursively(slt_output)
+        util.remove_dir_recursively(slant_output)
         if not self.cancel_flag.is_set():
-            self.send_progress(start_with + budget, 'Data reduction complete.')
+            self.send_progress(100, 'Data reduction complete.')
 
 
 if __name__ == '__main__':

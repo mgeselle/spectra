@@ -6,6 +6,7 @@ import numpy.ma as ma
 import numpy.polynomial as npp
 import numpy.typing as npt
 import scipy.optimize as sco
+import config
 
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
@@ -31,10 +32,14 @@ def resample_ref(rec_header: fits.Header, ref_header: fits.Header, ref_data: npt
     Returns:
         Resampled reference data.
     """
-    if 'SITELAT' not in rec_header or 'SITELONG' not in rec_header:
+    if 'AAV_SITE' in rec_header:
+        location = config.Config.get().get_location(rec_header['AAV_SITE'])
+    elif 'SITELAT' in rec_header and 'SITELONG' in rec_header:
+        location = EarthLocation.from_geodetic(rec_header['SITELONG'] * u.deg, rec_header['SITELAT'] * u.deg)
+    else:
         raise ValueError('No coordinate info in recorded FITS file')
 
-    location = EarthLocation.from_geodetic(rec_header['SITELONG'] * u.deg, rec_header['SITELAT'] * u.deg)
+
     obs_time = Time(rec_header['DATE-OBS'], format='isot', scale='utc')
 
     if ref_data.shape[0] == 1:

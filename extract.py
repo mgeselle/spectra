@@ -96,7 +96,7 @@ def optimal(input_files: Union[Path, Sequence[Path]],
             total_exptime += float(header['EXPTIME'])
             if min_time is None or head_time < min_time:
                 min_time = head_time
-            elif max_time is None or head_time > max_time:
+            if max_time is None or head_time > max_time:
                 max_time = head_time
                 end_time = max_time + TimeDelta(header['EXPTIME'], format='sec')
         header = fits.Header()
