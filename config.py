@@ -184,6 +184,7 @@ class Config:
                 self._config.Flush()
         finally:
             self._config.SetPath(old_path)
+            self._lock.release()
 
     def get_location_names(self):
         return self._get_config_names('/Location')

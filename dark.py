@@ -55,31 +55,38 @@ class Dark:
         dark = self._darks_by_exposure[exp_time]
         dark_hdu_l = fits.open(dark)
         dark_data = dark_hdu_l[0].data
-        result = in_data.astype(np.int32) - dark_data
+        result = np.asarray(in_data, dtype=np.float64) - np.asarray(dark_data, np.float64)
         dark_hdu_l.close()
         return result
 
     def _correct_scaled(self, in_data: npt.NDArray[Any], exp_time: float) -> npt.NDArray[Any]:
-        bias_hdu_l = fits.open(self._bias)
-        bias_data = bias_hdu_l[0].data
+        with fits.open(self._bias) as bias_hdu_l:
+            bias_data = np.asarray(bias_hdu_l[0].data, dtype=np.float64)
         dark_path = self._pick_dark(exp_time)
-        dark_hdu_l = fits.open(dark_path)
-        dark_data = dark_hdu_l[0].data - bias_data
-        dark_header = dark_hdu_l[0].header
-        scale = exp_time / float(dark_header['EXPTIME'])
-        dark_data = dark_data * scale
-        result = in_data.astype(np.int32) - dark_data - bias_data
-        dark_hdu_l.close()
-        bias_hdu_l.close()
+        if dark_path is not None:
+            with fits.open(dark_path) as dark_hdu_l:
+                dark_data = np.asarray(dark_hdu_l[0].data, dtype=np.float64) - bias_data
+                dark_header = dark_hdu_l[0].header
+            scale = exp_time / float(dark_header['EXPTIME'])
+            dark_data = dark_data * scale
+            result = np.asarray(in_data, dtype=np.float64) - dark_data - bias_data
+        else:
+            result = np.asarray(in_data, dtype=np.float64) - bias_data
         return result
 
-    def _pick_dark(self, exp_time: float) -> Path:
+    def _pick_dark(self, exp_time: float) -> Union[Path, None]:
         delta = None
         last_cand_time = None
         for cand_time in sorted(self._darks_by_exposure.keys()):
+            if cand_time < exp_time:
+                continue
+            if last_cand_time is None:
+                last_cand_time = cand_time
             new_delta = abs(exp_time - cand_time)
             if delta is not None and new_delta > delta:
                 break
             delta = new_delta
             last_cand_time = cand_time
+        if last_cand_time is None:
+            return None
         return self._darks_by_exposure[last_cand_time]

@@ -10,7 +10,8 @@ from scipy.signal import find_peaks
 
 
 def _find_next_peak(x_ref: Union[SupportsInt, SupportsFloat], x_data: npt.NDArray[Any]):
-    peaks, _ = find_peaks(x_data, prominence=2000)
+    stddev = np.std(x_data)
+    peaks, _ = find_peaks(x_data, prominence=stddev * 5)
     result = None
     last_delta = None
     for x in peaks:
@@ -27,9 +28,12 @@ def _move_row(in_row: npt.NDArray[Any], offset: float, x_0: int, out_row: npt.ND
     for x_target in range(0, out_row.shape[0]):
         x_src0 = int(floor(x_0 + x_target + offset))
         x_src1 = ceil(x_0 + x_target + offset)
-        w_0 = 1.0 - (x_0 + x_target + offset - x_src0)
-        w_1 = 1.0 - (x_src1 - x_0 - x_target - offset)
-        out_row[x_target] =  w_0 * in_row[x_src0] + w_1 * in_row[x_src1]
+        if x_src1 >= in_row.size or x_src0 > in_row.size:
+            out_row[x_target] = 0
+        else:
+            w_0 = 1.0 - (x_0 + x_target + offset - x_src0)
+            w_1 = 1.0 - (x_src1 - x_0 - x_target - offset)
+            out_row[x_target] =  w_0 * in_row[x_src0] + w_1 * in_row[x_src1]
 
 
 class Slant:

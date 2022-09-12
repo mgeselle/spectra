@@ -31,8 +31,10 @@ class Rotate:
         peak_low = _find_peak(data[:, x_low])
         peak_hi = _find_peak(data[:, x_hi])
         in_hdu_l.close()
-
-        self._angle = degrees(asin((peak_hi - peak_low) / sqrt((x_hi - x_low)**2 + (peak_hi - peak_low)**2)))
+        if peak_low == peak_hi:
+            self._angle = 0.0
+        else:
+            self._angle = degrees(asin((peak_hi - peak_low) / sqrt((x_hi - x_low)**2 + (peak_hi - peak_low)**2)))
 
     def rotate(self, input_files: Iterable[Path], output_dir: Path,
                callback: Union[Callable[[int, str], bool], None] = None,
@@ -54,7 +56,10 @@ class Rotate:
         in_hdu_l = fits.open(input_file)
         header = in_hdu_l[0].header
         data = in_hdu_l[0].data
-        data_new = rotate(data, self._angle, reshape=False)
+        if self._angle == 0.0:
+            data_new = data
+        else:
+            data_new = rotate(data, self._angle, reshape=False)
         hdu_new = fits.PrimaryHDU(data_new, header)
         output_file = output_path / input_file.name
         hdu_new.writeto(output_file, overwrite=True)

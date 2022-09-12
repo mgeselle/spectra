@@ -30,7 +30,10 @@ def apply(param: FlatParam, input_files: Union[Path, Sequence[Path]], output_pat
         in_hdu_l = fits.open(input_file)
         header = in_hdu_l[0].header
         data = in_hdu_l[0].data
-        out_data = data[param.y_lo:param.y_hi, param.x_lo:param.x_hi]
+        if param.x_lo == 0 == param.x_hi == 0 and param.y_lo == param.y_hi:
+            out_data = data
+        else:
+            out_data = data[param.y_lo:param.y_hi, param.x_lo:param.x_hi]
         out_data = out_data / param.flat
         in_hdu_l.close()
         out_hdu = fits.PrimaryHDU(out_data, header)
@@ -62,7 +65,10 @@ def _compute_flat(flat_path: Path) -> FlatParam:
     data = flat_hdu_l[0].data
     x_lo, x_hi = _find_shortest_black(data[0, :])
     y_lo, y_hi = _find_shortest_black(data[:, 0])
-    cropped_data = data[y_lo:y_hi, x_lo:x_hi]
+    if x_lo == 0 and x_hi == 0 and y_lo == 0 and y_hi == 0:
+        cropped_data = data
+    else:
+        cropped_data = data[y_lo:y_hi, x_lo:x_hi]
     flat_hdu_l.close()
 
     xdata = np.arange(0, cropped_data.shape[1])
@@ -71,9 +77,5 @@ def _compute_flat(flat_path: Path) -> FlatParam:
         poly = Polynomial.fit(xdata, cropped_data[i, :], deg=4)
         # noinspection PyCallingNonCallable
         fitted[i, :] = poly(xdata)
-    cropped_data = cropped_data - fitted
-    min_d = np.min(cropped_data)
-    if min_d < 0:
-        cropped_data = cropped_data + min_d
-    cropped_data = cropped_data / np.max(cropped_data)
+    cropped_data = cropped_data / fitted
     return FlatParam(cropped_data, x_lo, y_lo, x_hi, y_hi)
