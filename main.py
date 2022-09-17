@@ -25,6 +25,7 @@ ID_CROP = wx.NewIdRef()
 ID_REDUCE = wx.NewIdRef()
 ID_CFG_CAMERA = wx.NewIdRef()
 ID_CFG_CALIB = wx.NewIdRef()
+ID_ANNOTATE = wx.NewIdRef()
 
 
 class Main(wx.Frame):
@@ -67,6 +68,16 @@ class Main(wx.Frame):
 
         self.SetMenuBar(menubar)
 
+        self._toolbar = self.CreateToolBar()
+        resource_dir = Path(__file__).absolute().parent / 'resources'
+        annotate_bmp = wx.Bitmap()
+        annotate_bmp.LoadFile(str(resource_dir / 'pencil@1x.png'))
+        self._toolbar.SetToolBitmapSize(wx.Size(24, 24))
+        annotate_tool = self._toolbar.AddCheckTool(ID_ANNOTATE.GetId(), 'Annotate', annotate_bmp,
+                                                   shortHelp='Add annotation to image')
+        self._toolbar.Realize()
+        self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
+
         self._content_pane = wx.Panel(self)
         self._image_display = ImageDisplay(self._content_pane)
         self._specview = Specview(self._content_pane)
@@ -95,6 +106,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, AavsoObscodeCfgGui(self)), obs_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, LocationCfgGui(self)), loc_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
+        self._toolbar.Bind(wx.EVT_MENU, lambda evt: self._specview.toggle_annotate(), annotate_tool)
 
         display = wx.Display()
         display_sz = display.GetClientArea()
@@ -136,11 +148,13 @@ class Main(wx.Frame):
             else:
                 self._specview.add_spectrum(disp_data)
             menu.Enable(ID_ADD_SP.GetId(), True)
+            self._toolbar.EnableTool(ID_ANNOTATE.GetId(), True)
         elif header['NAXIS'] == 2:
             data = None
             self.make_specview_visible(False)
             self._image_display.display(file_name)
             menu.Enable(ID_ADD_SP.GetId(), False)
+            self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
 
     def _add_spectrum(self, event: wx.CommandEvent):
         file_name = wxutil.select_file(self)

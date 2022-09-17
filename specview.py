@@ -1,11 +1,95 @@
+from matplotlib.axes import Axes
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
-from matplotlib.backend_bases import MouseEvent
+from matplotlib.backend_bases import MouseEvent, PickEvent, KeyEvent
 from matplotlib.figure import Figure
 import numpy as np
 import numpy.typing as npt
 from typing import Union, Any, Callable, SupportsFloat, SupportsInt
 import wx
+
+
+class AnnotationHandler:
+    def __init__(self, figure: Figure, axes: Axes):
+        self._figure = figure
+        self._axes = axes
+        self._mouse_cid = self._figure.canvas.mpl_connect('button_press_event', self._on_click)
+        self._pick_cid = self._figure.canvas.mpl_connect('pick_event', self._on_pick)
+        self._key_cid = None
+        self._text = None
+        self._text_data = None
+        self._text_pos = 0
+        self._text_x = None
+        self._text_y = None
+        self._editing = False
+
+    def dispose(self):
+        if self._key_cid is not None:
+            self._figure.canvas.mpl_disconnect(self._key_cid)
+        self._figure.canvas.mpl_disconnect(self._pick_cid)
+        self._figure.canvas.mpl_disconnect(self._mouse_cid)
+
+    def _on_click(self, event: MouseEvent):
+        if not event.inaxes:
+            return
+        if self._key_cid is None:
+            self._key_cid = self._figure.canvas.mpl_connect('key_press_event', self._on_key)
+        self._text_x = event.xdata
+        self._text_y = event.ydata
+        self._editing = True
+
+    def _on_pick(self, event: PickEvent):
+        self._text = event.artist
+        self._text_data = self._text.get_text()
+        self._text_pos = 0
+        self._editing = event.mouseevent.dblclick
+
+    def _on_key(self, event: KeyEvent):
+        if event.key == 'escape':
+            if self._editing:
+                self._editing = False
+            else:
+                self._end_editing()
+            return
+
+        if event.key == 'alt+ctrl+@':
+            key = '@'
+        else:
+            key = event.key
+
+        if self._editing:
+            if self._text is None:
+                self._text_data = ''
+                self._text_pos = 0
+                self._text = self._axes.text(self._text_x, self._text_y, self._text_data, picker=10.0)
+            if key == 'left' and self._text_pos > 0:
+                self._text_pos -= 1
+            elif key == 'right' and self._text_pos < len(self._text_data):
+                self._text_pos += 1
+            elif key == 'backspace':
+                if self._text_pos > 0:
+                    self._text_data = self._text_data[0:self._text_pos - 1] + self._text_data[self._text_pos:]
+                    self._text_pos -= 1
+                    self._text.set_text(self._text_data)
+                    self._figure.canvas.draw_idle()
+            elif key == 'delete' and self._text_pos < len(self._text_data):
+                self._text_data = self._text_data[0:self._text_pos] + self._text_data[self._text_pos + 1:]
+                self._text.set_text(self._text_data)
+                self._figure.canvas.draw_idle()
+            elif len(key) == 1:
+                self._text_data = self._text_data[0:self._text_pos] + key + self._text_data[self._text_pos:]
+                self._text_pos += 1
+                self._text.set_text(self._text_data)
+                self._figure.canvas.draw_idle()
+        elif key == 'backspace' and self._text is not None:
+            self._text.remove()
+            self._end_editing()
+            self._figure.canvas.draw_idle()
+
+    def _end_editing(self):
+        self._text = None
+        self._figure.canvas.mpl_disconnect(self._key_cid)
+        self._key_cid = None
 
 
 class Specview(wx.Panel):
@@ -32,6 +116,7 @@ class Specview(wx.Panel):
         self._picking_pi_cid = None
         self._picking_line = dict()
         self._picked_x = None
+        self._annotation_handler = None
         self._current_max = None
 
     def add_spectrum(self, data: npt.NDArray[Any], lambda_ref: Union[None, float] = None,
@@ -97,6 +182,13 @@ class Specview(wx.Panel):
         else:
             self._picking_line[name].set_data(xdata, ydata)
         self._canvas.draw()
+
+    def toggle_annotate(self):
+        if self._annotation_handler is None:
+            self._annotation_handler = AnnotationHandler(self._fig, self._axes)
+        else:
+            self._annotation_handler.dispose()
+            self._annotation_handler = None
 
     def _on_click(self, event: MouseEvent):
         if self._picking_cb is None:

@@ -359,8 +359,8 @@ def find_peaks(data: npt.NDArray[Any]) -> Union[Tuple[npt.NDArray[Any], Sequence
             min_peak_dist = peak_dist
 
     _, fwhm = fit_peak(data, peaks[center_peak], props['widths'][center_peak])
-    peaks, props = signal.find_peaks(data, width=(int(fwhm), int(2 * fwhm)))
-    prominence = np.max(data) / 30
+    peaks, props = signal.find_peaks(data, width=(int(0.8 * fwhm), int(2 * fwhm)))
+    prominence = np.max(data) / 50
     result = []
     fwhms = []
     for peak_no in range(0, peaks.shape[0]):

@@ -268,7 +268,7 @@ def apply_response(resp_path: Path, pgm_path: Path, output_path: Path):
 
     if resp_lam_end < pgm_lam_end:
         pgm_lam_end = pgm_lam_start + int((resp_lam_end - pgm_lam_start) / pgm_lam_step) * pgm_lam_step
-        pgm_end_idx = int(pgm_lam_end - pgm_lam_start) / pgm_lam_step
+        pgm_end_idx = int((pgm_lam_end - pgm_lam_start) / pgm_lam_step)
     else:
         pgm_end_idx = int((pgm_lam_end - pgm_lam_start) / pgm_lam_step)
 
