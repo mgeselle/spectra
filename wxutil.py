@@ -39,6 +39,20 @@ def select_file(parent: wx.Window, title: str = 'Open FITS file') -> Union[None,
         return result
 
 
+def pick_save_file(parent: wx.Window, title: str = 'Save file') -> Union[None, Path]:
+    initial_dir = str(Config.get().get_last_directory())
+    with wx.FileDialog(parent, message=title, defaultDir=initial_dir,
+                       style=wx.FD_SAVE) as dlg:
+        dlg_res = dlg.ShowModal()
+        if dlg_res == wx.ID_CANCEL:
+            return None
+        result_path = Path(dlg.GetPath())
+        Config.get().set_last_directory(result_path.parent)
+        if not result_path.suffix:
+            result_path = result_path.parent / (result_path.name + '.fits')
+        return result_path
+
+
 def ensure_dir_exists(the_dir: str, role: str, parent: wx.Window) -> Union[Path, None]:
     """Ensure that a directory exists and show a message box if it doesn't.
 

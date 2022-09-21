@@ -457,7 +457,8 @@ class CalibDialog(wx.Dialog):
             if len(text) > len(longest_text):
                 longest_text = text
 
-        self._specview.add_spectrum(data)
+        spec_xdata = np.arange(0, data.size)
+        self._specview.add_markers(spec_xdata, data, fmt='-b')
         self._peaks = peaks
         self._lambda = np.zeros(peaks.shape[0])
         self._poly = None
