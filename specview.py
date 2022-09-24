@@ -1,12 +1,14 @@
 import abc
 from abc import ABC
 from dataclasses import dataclass
-from math import sqrt
+from math import sqrt, log
 from pathlib import Path
 from typing import Union, Any
 
+import matplotlib.transforms as transforms
 import numpy as np
 import numpy.typing as npt
+import scipy.optimize as optimize
 import wx
 import wx.lib.newevent as ne
 from astropy.io import fits
@@ -210,8 +212,8 @@ class ContinuumFit(SpecEvtHandler, SaveHandler):
         closest_marker_data = (self._x_pick[min_idx], self._y_pick[min_idx])
         closest_marker_screen = self._axes.transData.transform(closest_marker_data)
         event_screen = self._axes.transData.transform((x, y))
-        distance = sqrt((closest_marker_screen[0] - event_screen[0])**2 +
-                        (closest_marker_screen[1] - event_screen[1])**2)
+        distance = sqrt((closest_marker_screen[0] - event_screen[0]) ** 2 +
+                        (closest_marker_screen[1] - event_screen[1]) ** 2)
         if distance <= 10:
             if len(self._x_pick) < 3:
                 return
@@ -281,6 +283,183 @@ class ContinuumFit(SpecEvtHandler, SaveHandler):
             self._parent.QueueEvent(FileReadyEvent())
 
 
+class PeakMeasureHandler(SpecEvtHandler):
+    def __init__(self, parent: wx.Window):
+        super().__init__()
+        self._parent = parent
+        self._data = None
+        self._lambda_start = None
+        self._lambda_step = None
+
+        self._click_cid = None
+        self._move_cid = None
+        self._key_cid = None
+        self._start_marker = None
+        self._peak_line = None
+        self._line_start_idx = None
+        self._line_end_idx = None
+        self._start_x = None
+        self._start_y = None
+
+    def init(self, figure: Figure, axes: Axes):
+        super().init(figure, axes)
+        self._click_cid = self._figure.canvas.mpl_connect('button_press_event', self._on_click)
+
+    def set_data(self, data: SpecData):
+        self._data = data.data
+        header = data.header
+        if 'CRVAL1' in header:
+            self._lambda_step = float(header['CDELT1'])
+            self._lambda_start = float(header['CRVAL1']) + (1.0 - float(header['CRPIX1']) * self._lambda_step)
+        else:
+            self._lambda_step = 1.0
+            self._lambda_start = 0.0
+
+    def dispose(self):
+        if self._start_marker is not None:
+            self._start_marker.remove()
+            self._start_marker = None
+            if self._peak_line is not None:
+                self._peak_line.remove()
+                self._peak_line = None
+            self._figure.canvas.draw_idle()
+            if self._move_cid is not None:
+                self._figure.canvas.mpl_disconnect(self._move_cid)
+                self._move_cid = None
+            if self._key_cid is not None:
+                self._figure.canvas.mpl_disconnect(self._key_cid)
+                self._key_cid = None
+        self._figure.canvas.mpl_disconnect(self._click_cid)
+        self._click_cid = None
+        self._data = None
+
+    def _on_click(self, event: MouseEvent):
+        if self._key_cid is not None:
+            self._figure.canvas.mpl_disconnect(self._key_cid)
+            self._key_cid = None
+        if self._start_marker is not None:
+            self._start_marker.remove()
+            self._start_marker = None
+            if self._peak_line is not None:
+                self._peak_line.remove()
+                self._peak_line = None
+        if not event.inaxes:
+            return
+        self._line_start_idx = int((event.xdata - self._lambda_start) / self._lambda_step)
+        if self._line_start_idx >= self._data.size or self._line_start_idx < 0:
+            self._line_start_idx = None
+            return
+        self._start_x = self._lambda_start + self._line_start_idx * self._lambda_step
+        self._start_y = self._data[self._line_start_idx]
+        self._start_marker = self._axes.plot([self._start_x], [self._start_y], 'or').pop()
+        self._move_cid = self._figure.canvas.mpl_connect('motion_notify_event', self._on_move)
+        self._figure.canvas.mpl_disconnect(self._click_cid)
+        self._click_cid = self._figure.canvas.mpl_connect('button_release_event', self._on_release)
+        self._figure.canvas.draw_idle()
+
+    def _draw_line_to_event(self, event: MouseEvent, draw_markers: bool = False) -> int:
+        x_idx = int((event.xdata - self._lambda_start) / self._lambda_step)
+        x = event.xdata
+        if x_idx < 0:
+            x_idx = 0
+            x = self._lambda_start
+        elif x_idx >= self._data.size:
+            x_idx = self._data.size - 1
+            x = self._lambda_start + (self._data.size - 1) * self._lambda_step
+        if x < self._start_x:
+            x_d = [x, self._start_x]
+            y_d = [self._data[x_idx], self._start_y]
+        else:
+            x_d = [self._start_x, x]
+            y_d = [self._start_y, self._data[x_idx]]
+        if self._peak_line is None:
+            self._peak_line = self._axes.plot(x_d, y_d, '-r').pop()
+        else:
+            self._peak_line.set_data(x_d, y_d)
+        if draw_markers:
+            self._start_marker.set_data(x_d, y_d)
+        self._figure.canvas.draw_idle()
+        return x_idx
+
+    def _on_move(self, event: MouseEvent):
+        if not event.inaxes:
+            return
+        self._draw_line_to_event(event)
+
+    def _on_release(self, event: MouseEvent):
+        if not event.inaxes:
+            if self._peak_line is not None:
+                self._peak_line.remove()
+                self._peak_line = None
+            self._start_marker.remove()
+            self._start_marker = None
+            self._figure.canvas.draw_idle()
+        else:
+            self._line_end_idx = self._draw_line_to_event(event, draw_markers=True)
+            if self._line_end_idx < self._line_start_idx:
+                tmp = self._line_end_idx
+                self._line_end_idx = self._line_start_idx
+                self._line_start_idx = tmp
+        self._figure.canvas.mpl_disconnect(self._move_cid)
+        self._move_cid = None
+        self._figure.canvas.mpl_disconnect(self._click_cid)
+        self._click_cid = self._figure.canvas.mpl_connect('button_press_event', self._on_click)
+        self._key_cid = self._figure.canvas.mpl_connect('key_press_event', self._on_key)
+
+    def _on_key(self, event: KeyEvent):
+        if event.key != 'enter':
+            return
+        self._figure.canvas.mpl_disconnect(self._key_cid)
+        self._key_cid = None
+
+        # We will try to fit a gaussian on a line to the peak, i.e.:
+        # f(l) = a + b * l + c * exp(-0.5 * [(l - e) / d]**2)
+        lr_start = self._lambda_start + self._line_start_idx * self._lambda_step
+        lr_end = self._lambda_start + self._line_end_idx * self._lambda_step
+
+        xdata = np.linspace(lr_start, lr_end, self._line_end_idx - self._line_start_idx + 1)
+        ydata = self._data[self._line_start_idx:self._line_end_idx + 1]
+        ymean = (ydata[0] + ydata[-1]) / 2
+        x_mid_idx = int(xdata.size / 2)
+        a_0 = (ydata[0] * xdata[-1] - ydata[-1] * xdata[0]) / (xdata[-1] - xdata[0])
+        b_0 = (ydata[-1] - ydata[0]) / (xdata[-1] - xdata[0])
+        if ydata[x_mid_idx] < ymean:
+            c_0 = -(np.min(ydata) - ymean)
+        else:
+            c_0 = np.max(ydata) - ymean
+        factor = 2 * sqrt(2 * log(2))
+        d_0 = (xdata[-1] - xdata[0]) / (4 * factor)
+        e_0 = xdata[int(xdata.size / 2)]
+
+        def model(x, a, b, c, d, e):
+            return a + x * b + c * np.exp(-0.5 * ((x - e) / d) ** 2)
+
+        try:
+            popt, _ = optimize.curve_fit(model, xdata, ydata, p0=(a_0, b_0, c_0, d_0, e_0))
+        except RuntimeError as ex:
+            with wx.MessageDialog(self._parent, str(ex), 'Curve Fitting Error',
+                                  style=wx.OK | wx.ICON_ERROR | wx.CENTRE) as dlg:
+                dlg.ShowModal()
+            return
+        self._peak_line.set_data(xdata, model(xdata, *popt))
+        fwhm = abs(popt[3] * factor)
+        text = f'{popt[4]:.3f}\nFWHM = {fwhm:.3f}'
+        if popt[2] < 0:
+            x_off = -10 / 72
+            y_off = -10 / 72
+            rotation = 270.0
+        else:
+            rotation = 'vertical'
+            x_off = 10 / 72
+            y_off = 10 / 72
+        translation = transforms.ScaledTranslation(x_off, y_off, self._figure.dpi_scale_trans)
+        transform = self._axes.transData + translation
+        self._axes.text(popt[4], model(popt[4:5], *popt)[0],
+                        text, rotation=rotation, transform=transform, transform_rotates_text=False,
+                        rotation_mode='anchor')
+        self._figure.canvas.draw_idle()
+
+
 class Specview(wx.Panel):
     def __init__(self, parent: wx.Window, **kwargs):
         super().__init__(parent, **kwargs)
@@ -348,8 +527,9 @@ class Specview(wx.Panel):
         for item in self._lines.items():
             item[1].line.remove()
         self._lines.clear()
+        self._axes.clear()
         self._axes.relim()
-        self._canvas.draw()
+        self._canvas.draw_idle()
         self._xdata = None
         self._current_max = None
 

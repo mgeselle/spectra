@@ -16,7 +16,7 @@ from configgui import CamCfgGUI, TelescopeCfgGui, SpectrometerCfgGui, AavsoCfgGu
 from crop import Crop
 from imgdisplay import ImageDisplay
 from reduce import Reduce
-from specview import Specview, AnnotationHandler, ContinuumFit, EVT_ID_FILE_READY
+from specview import Specview, AnnotationHandler, ContinuumFit, PeakMeasureHandler, EVT_ID_FILE_READY
 
 ID_OPEN = wx.NewIdRef()
 ID_SAVE = wx.NewIdRef()
@@ -28,6 +28,7 @@ ID_CFG_CAMERA = wx.NewIdRef()
 ID_CFG_CALIB = wx.NewIdRef()
 ID_ANNOTATE = wx.NewIdRef()
 ID_RECTIFY = wx.NewIdRef()
+ID_MEASURE = wx.NewIdRef()
 
 
 class Main(wx.Frame):
@@ -85,9 +86,15 @@ class Main(wx.Frame):
         rectify_tool = self._toolbar.AddCheckTool(ID_RECTIFY.GetId(), 'Rectify', rectify_bmp,
                                                   shortHelp='Rectify spectrum')
 
+        measure_bmp = wx.Bitmap()
+        measure_bmp.LoadFile(str(resource_dir / 'ruler@1x.png'))
+        measure_tool = self._toolbar.AddCheckTool(ID_MEASURE.GetId(), 'Measure', measure_bmp,
+                                                  shortHelp='Measure peaks')
+
         self._toolbar.Realize()
         self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
         self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
+        self._toolbar.EnableTool(ID_MEASURE.GetId(), False)
 
         self._content_pane = wx.Panel(self)
         self._image_display = ImageDisplay(self._content_pane)
@@ -125,16 +132,17 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_annotate, annotate_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_rectify, rectify_tool)
+        self._toolbar.Bind(wx.EVT_MENU, self._toggle_measure, measure_tool)
         self.Bind(EVT_ID_FILE_READY, lambda evt: self._file_menu.Enable(ID_SAVE.GetId(), True))
 
         display = wx.Display()
         display_sz = display.GetClientArea()
         width = int(0.6 * display_sz.GetWidth())
         height = int(0.6 * display_sz.GetHeight())
-        if width < min_sz.Width:
-            width = min_sz.Width
-        if height < min_sz.Height:
-            height = min_sz.Height
+        if width < min_sz.GetWidth():
+            width = min_sz.GetWidth()
+        if height < min_sz.GetHeight():
+            height = min_sz.GetHeight()
         self.SetMinClientSize(wx.Size(width, height))
 
     def make_specview_visible(self, visible: bool):
@@ -162,6 +170,7 @@ class Main(wx.Frame):
         if self._specview_visible:
             self._toolbar.ToggleTool(ID_ANNOTATE, False)
             self._toolbar.ToggleTool(ID_RECTIFY, False)
+            self._toolbar.ToggleTool(ID_MEASURE, False)
             self._specview.toggle_event_handler(None)
 
         if header['NAXIS'] == 1 or data.shape[0] == 1:
@@ -175,6 +184,7 @@ class Main(wx.Frame):
             menu.Enable(ID_ADD_SP.GetId(), True)
             self._toolbar.EnableTool(ID_ANNOTATE.GetId(), True)
             self._toolbar.EnableTool(ID_RECTIFY.GetId(), True)
+            self._toolbar.EnableTool(ID_MEASURE.GetId(), True)
         elif header['NAXIS'] == 2:
             data = None
             self.make_specview_visible(False)
@@ -182,6 +192,7 @@ class Main(wx.Frame):
             menu.Enable(ID_ADD_SP.GetId(), False)
             self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
             self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
+            self._toolbar.EnableTool(ID_MEASURE.GetId(), False)
 
     def _add_spectrum(self, event: wx.CommandEvent):
         file_name = wxutil.select_file(self)
@@ -216,21 +227,37 @@ class Main(wx.Frame):
         dlg.Bind(wx.EVT_SHOW, lambda evt: Main._enable_after_close(evt, menu, item))
         dlg.Show()
 
+    def _enable_others(self, selected_id: int, enable: bool):
+        if ID_ANNOTATE.GetId() != selected_id:
+            self._toolbar.EnableTool(ID_ANNOTATE.GetId(), enable)
+        if ID_MEASURE.GetId() != selected_id:
+            self._toolbar.EnableTool(ID_MEASURE.GetId(), enable)
+        if ID_RECTIFY.GetId() != selected_id:
+            self._toolbar.EnableTool(ID_RECTIFY.GetId(), enable)
+
     def _toggle_annotate(self, event: wx.CommandEvent):
         if event.GetSelection():
             self._specview.toggle_event_handler(AnnotationHandler())
-            self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
+            self._enable_others(ID_ANNOTATE.GetId(), False)
         else:
             self._specview.toggle_event_handler(None)
-            self._toolbar.EnableTool(ID_RECTIFY.GetId(), True)
+            self._enable_others(ID_ANNOTATE.GetId(), True)
 
     def _toggle_rectify(self, event: wx.CommandEvent):
         if event.GetSelection():
             self._specview.toggle_event_handler(ContinuumFit(self))
-            self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
+            self._enable_others(ID_RECTIFY.GetId(), False)
         else:
             self._specview.toggle_event_handler(None)
-            self._toolbar.EnableTool(ID_ANNOTATE.GetId(), True)
+            self._enable_others(ID_RECTIFY.GetId(), True)
+
+    def _toggle_measure(self, event: wx.CommandEvent):
+        if event.GetSelection():
+            self._specview.toggle_event_handler(PeakMeasureHandler(self))
+            self._enable_others(ID_MEASURE.GetId(), False)
+        else:
+            self._specview.toggle_event_handler(None)
+            self._enable_others(ID_MEASURE.GetId(), True)
 
     def _show_calib_file_dialog(self, event: wx.CommandEvent):
         menu, item = Main._disable_before_open(event)
