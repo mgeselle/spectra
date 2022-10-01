@@ -1,4 +1,5 @@
 import math
+import re
 import threading
 from pathlib import Path
 from typing import Sequence, Union, Any, Tuple, Callable
@@ -16,6 +17,7 @@ import wx.lib.intctrl as wxli
 import wx.lib.newevent as ne
 from astropy.io import fits
 from astroquery.nist import Nist
+from numpy.ma.core import MaskError
 
 import util
 import wxutil
@@ -360,7 +362,7 @@ def find_peaks(data: npt.NDArray[Any]) -> Union[Tuple[npt.NDArray[Any], Sequence
 
     _, fwhm = fit_peak(data, peaks[center_peak], props['widths'][center_peak])
     peaks, props = signal.find_peaks(data, width=(int(0.8 * fwhm), int(2 * fwhm)))
-    prominence = np.max(data) / 50
+    prominence = np.max(data) / 100
     result = []
     fwhms = []
     for peak_no in range(0, peaks.shape[0]):
@@ -448,12 +450,16 @@ class CalibDialog(wx.Dialog):
 
         lines = CalibDialog._load_lines()
         self._lambda_by_text = dict()
-        choices_list = ['--']
+        self._index_by_lambda = dict()
+        self._choices_list = ['--']
         longest_text = '--'
+        index = 1
         for line in lines:
             text = f'{line[0]:.2f} ({line[1]}) {line[2]}'
-            choices_list.append(text)
+            self._choices_list.append(text)
             self._lambda_by_text[text] = line[0]
+            self._index_by_lambda[line[0]] = index
+            index += 1
             if len(text) > len(longest_text):
                 longest_text = text
 
@@ -467,16 +473,21 @@ class CalibDialog(wx.Dialog):
             peak_y[peak_no] = data[round(peaks[peak_no])]
             # While sharing cell editors is theoretically possible, doing so makes wx complain
             # about reference counts < 0 on shutdown. --> Create one for every cell.
-            editor = grid.GridCellChoiceEditor(choices_list, False)
+            editor = grid.GridCellChoiceEditor(self._choices_list, False)
             self._grid.SetCellEditor(peak_no, 0, editor)
-            self._grid.SetCellValue(peak_no, 0, choices_list[0])
+            self._grid.SetCellValue(peak_no, 0, self._choices_list[0])
         self._grid.SetCellValue(0, 0, longest_text)
         self._grid.AutoSizeColumn(0, True)
-        self._grid.SetCellValue(0, 0, choices_list[0])
+        self._grid.SetCellValue(0, 0, self._choices_list[0])
         self._markers = self._specview.add_markers(peaks, peak_y, fmt='vr')
 
         vbox.SetSizeHints(self)
         self.SetSizer(vbox)
+        vbox_best_sz = self.GetBestSize()
+        if vbox_best_sz.GetHeight() > 0.8 * display_sz.GetHeight():
+            vbox_best_sz = wx.Size(vbox_best_sz.GetWidth(), int(0.8 * display_sz.GetHeight()))
+        self.SetSizeHints(vbox_best_sz)
+        self.SetInitialSize(vbox_best_sz)
 
     @property
     def poly(self):
@@ -508,16 +519,57 @@ class CalibDialog(wx.Dialog):
                     continue
                 if wavelength > limit_high:
                     break
+                try:
+                    rel_i_m = re.match(r'\d+', str(rel_int))
+                    if not rel_i_m:
+                        continue
+                    rel_int = int(rel_i_m.group(0))
+                except ValueError:
+                    continue
+                except MaskError:
+                    continue
                 result.append((wavelength, rel_int, line))
+        result.sort(key=lambda x: x[1], reverse=True)
+        result = result[0:200]
         result.sort(key=lambda x: x[0])
         return result
 
     def _on_cell_changing(self, event: grid.GridEvent):
         text = event.GetString()
-        if text == '--':
-            return
         peak_no = event.GetRow()
+        if text == '--':
+            first_peak, first_choice = self._find_next_choice_up(peak_no, None)
+            last_peak, last_choice = self._find_last_choice_down(peak_no, None)
+            choices = ['--']
+            choices.extend(self._choices_list[first_choice:last_choice])
+            joined_choices = ','.join(choices)
+            for row in range(first_peak, last_peak):
+                editor = self._grid.GetCellEditor(row, 0)
+                editor.SetParameters(joined_choices)
+                # Getting the editor increases its ref count
+                editor.DecRef()
+            return
         new_lambda = self._lambda_by_text[text]
+        first_peak, first_choice = self._find_next_choice_up(peak_no, new_lambda)
+        if first_peak is not None and first_peak != peak_no:
+            choices = ['--']
+            choices.extend(self._choices_list[first_choice:self._index_by_lambda[new_lambda]])
+            joined_choices = ','.join(choices)
+            for row in range(first_peak, peak_no):
+                editor = self._grid.GetCellEditor(row, 0)
+                editor.SetParameters(joined_choices)
+                editor.DecRef()
+
+        last_peak, last_choice = self._find_last_choice_down(peak_no, new_lambda)
+        if last_peak is not None:
+            choices = ['--']
+            choices.extend(self._choices_list[self._index_by_lambda[new_lambda]:last_choice])
+            joined_choices = ','.join(choices)
+            for row in range(peak_no + 1, last_peak):
+                editor = self._grid.GetCellEditor(row, 0)
+                editor.SetParameters(joined_choices)
+                editor.DecRef()
+
         if peak_no > 0:
             for peak in range(peak_no - 1, -1, -1):
                 if self._lambda[peak] != 0:
@@ -568,6 +620,28 @@ class CalibDialog(wx.Dialog):
         residual = np.abs(ydata - self._poly(xdata))
         for i in range(0, len(nonzero)):
             self._grid.SetCellValue(nonzero[i], 1, f'{residual[i]:.3f}')
+
+    def _find_next_choice_up(self, peak, lambda_peak):
+        if peak == 0:
+            if lambda_peak is None:
+                return 0, 1
+            else:
+                return None, None
+        for i in range(peak - 1, -1, -1):
+            if self._lambda[i] != 0:
+                return i + 1, self._index_by_lambda[self._lambda[i]] + 1
+        return 0, 1
+
+    def _find_last_choice_down(self, peak, lambda_peak):
+        if peak == len(self._peaks) - 1:
+            if lambda_peak is None:
+                return peak + 1, len(self._choices_list)
+            else:
+                return None, None
+        for i in range(peak + 1, len(self._peaks)):
+            if self._lambda[i] != 0:
+                return i, self._index_by_lambda[self._lambda[i]]
+        return len(self._peaks), len(self._choices_list)
 
 
 def apply_calibration(input_path: Path, calib: Callable[[npt.NDArray], npt.NDArray], output_path: Path,

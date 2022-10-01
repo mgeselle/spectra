@@ -172,6 +172,7 @@ class Main(wx.Frame):
             self._toolbar.ToggleTool(ID_RECTIFY, False)
             self._toolbar.ToggleTool(ID_MEASURE, False)
             self._specview.toggle_event_handler(None)
+            self._file_menu.Enable(ID_SAVE.GetId(), False)
 
         if header['NAXIS'] == 1 or data.shape[0] == 1:
             if data.shape[0] == 1:
@@ -249,6 +250,7 @@ class Main(wx.Frame):
             self._enable_others(ID_RECTIFY.GetId(), False)
         else:
             self._specview.toggle_event_handler(None)
+            self._file_menu.Enable(ID_SAVE.GetId(), False)
             self._enable_others(ID_RECTIFY.GetId(), True)
 
     def _toggle_measure(self, event: wx.CommandEvent):
