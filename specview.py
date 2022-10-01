@@ -7,7 +7,9 @@ from typing import Union, Any
 
 import matplotlib.transforms as transforms
 import numpy as np
+import numpy.ma as ma
 import numpy.typing as npt
+import numpy.polynomial as npp
 import scipy.optimize as optimize
 import wx
 import wx.lib.newevent as ne
@@ -163,16 +165,46 @@ class ContinuumFit(SpecEvtHandler, SaveHandler):
         super().init(figure, axes)
         header = self._data.header
         data = self._data.data
-        if header is None:
-            self._x_pick = [0, data.size - 1]
+        if header is None or 'CDELT1' not in header:
             self._xdata = np.arange(0, data.size)
         else:
             lambda_step = float(header['CDELT1'])
             lambda_ref = float(header['CRVAL1']) + (1 - float(header['CRPIX1'])) * lambda_step
-            self._x_pick = [lambda_ref, lambda_ref + (data.size - 1) * lambda_step]
-            self._xdata = np.linspace(self._x_pick[0], self._x_pick[1], data.size)
-        self._y_pick = [data[0], data[-1]]
-        tck = interpolate.splrep(self._x_pick, self._y_pick, s=0, k=1)
+            lambda_end = lambda_ref + (data.size - 1) * lambda_step
+            self._xdata = np.linspace(lambda_ref, lambda_end, data.size)
+
+        # Initially fit a polynomial to the spectrum
+        xdata = ma.asarray(self._xdata)
+        ydata = ma.asarray(data)
+        pixel_rejected = True
+        while pixel_rejected:
+            if xdata.mask is ma.nomask:
+                x_fit = xdata
+                y_fit = ydata
+            else:
+                x_fit = xdata[~xdata.mask]
+                y_fit = ydata[~ydata.mask]
+            poly = npp.Polynomial.fit(x_fit, y_fit, 10)
+            residual = (ydata - poly(xdata))**2
+            residual.mask = xdata.mask
+            mean_res = ma.mean(residual)
+            rej_idx = ma.nonzero(residual > 25 * mean_res)[0]
+            pixel_rejected = False
+            for idx in rej_idx:
+                pixel_rejected = True
+                xdata[idx] = ma.masked
+                ydata[idx] = ma.masked
+        # Now create a spline from the polynom in order to allow the user to add/remove points
+        interval = int((data.size - 1)/ 20)
+        self._x_pick = []
+        self._y_pick = []
+        for idx in range(0, data.size, interval):
+            self._x_pick.append(self._xdata[idx])
+        if 20 * interval != data.size - 1:
+            self._x_pick.append(self._xdata[-1])
+        self._y_pick = list(poly(np.asarray(self._x_pick)))
+
+        tck = interpolate.splrep(self._x_pick, self._y_pick, s=0, k=3)
         self._continuum = interpolate.splev(self._xdata, tck, der=0)
         self._continuum_line = self._axes.plot(self._xdata, self._continuum, '-r').pop()
         self._pick_line = self._axes.plot(self._x_pick, self._y_pick, 'or').pop()
