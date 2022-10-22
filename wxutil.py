@@ -1,7 +1,10 @@
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Union, Sequence
+
+import astropy.io.fits as fits
 import wx
+
 from config import Config
 
 
@@ -133,3 +136,22 @@ def find_files_by_pattern(dir_path: Path, pattern: str, role: str, parent: wx.Wi
             return None
     else:
         return matches
+
+
+def set_object_name(parent: wx.Window):
+    file_str = select_file(parent, 'Select FITS file')
+    if file_str is None:
+        return
+    file_path = Path(file_str)
+    with fits.open(file_path) as hdu:
+        header = hdu[0].header
+        data = hdu[0].data
+
+    with wx.TextEntryDialog(parent, caption='Set Object Name', message='Object Name:') as dlg:
+        dlg.SetMaxLength(30)
+        if 'OBJNAME' in header:
+            dlg.SetValue(header['OBJNAME'])
+        if dlg.ShowModal() == wx.ID_OK:
+            header['OBJNAME'] = dlg.GetValue()
+            fits.PrimaryHDU(data, header).writeto(file_path, overwrite=True)
+
