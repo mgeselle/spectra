@@ -1,6 +1,7 @@
 from astropy.io import fits
 import functools
 from math import asin, sqrt, degrees
+import numpy as np
 import numpy.typing as npt
 from pathlib import Path
 from scipy.ndimage import rotate
@@ -8,9 +9,9 @@ from scipy.signal import find_peaks
 from typing import Union, Any, Iterable, Callable
 
 
-def _find_peak(column: npt.NDArray[Any]):
+def _find_peak(column: npt.NDArray[Any], sigma: float):
     min_dist = int(column.shape[0] / 10)
-    peaks, _ = find_peaks(column, distance=min_dist)
+    peaks, _ = find_peaks(column, prominence=3 * sigma, width=4)
     peak_idx = None
     max_peak = None
     for index in peaks:
@@ -24,12 +25,16 @@ class Rotate:
     def __init__(self, pgm_file: Path):
         in_hdu_l = fits.open(pgm_file)
         data = in_hdu_l[0].data
+        sigma = np.std(data[0:10, :])
+
         x_dim = data.shape[1]
         x_low = int(x_dim / 4)
         x_hi = x_low * 3
 
-        peak_low = _find_peak(data[:, x_low])
-        peak_hi = _find_peak(data[:, x_hi])
+        # noinspection PyTypeChecker
+        peak_low = _find_peak(data[:, x_low], sigma)
+        # noinspection PyTypeChecker
+        peak_hi = _find_peak(data[:, x_hi], sigma)
         in_hdu_l.close()
         if peak_low == peak_hi:
             self._angle = 0.0
