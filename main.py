@@ -339,7 +339,7 @@ class Main(wx.Frame):
                     dlg.ShowModal()
                 menu.Enable(item, True)
                 return
-            response.create_response(rec_path, ref_path, out_path)
+            response.create_response(self, rec_path, ref_path, out_path)
         menu.Enable(item, True)
 
     def _run_apply_response(self, event: wx.CommandEvent):

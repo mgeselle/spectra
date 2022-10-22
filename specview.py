@@ -184,7 +184,7 @@ class ContinuumFit(SpecEvtHandler, SaveHandler):
             else:
                 x_fit = xdata[~xdata.mask]
                 y_fit = ydata[~ydata.mask]
-            poly = npp.Polynomial.fit(x_fit, y_fit, 10)
+            poly = npp.Polynomial.fit(x_fit, y_fit, 30)
             residual = (ydata - poly(xdata))**2
             residual.mask = xdata.mask
             mean_res = ma.mean(residual)
@@ -225,6 +225,10 @@ class ContinuumFit(SpecEvtHandler, SaveHandler):
     def save_file(self, file_path: Path):
         hdu = fits.PrimaryHDU(self._data.data, self._data.header)
         hdu.writeto(file_path, overwrite=True)
+
+    @property
+    def continuum(self):
+        return self._continuum
 
     def _on_click(self, event: MouseEvent):
         if not event.inaxes or self._continuum_line is None:

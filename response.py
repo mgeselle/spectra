@@ -1,3 +1,7 @@
+from math import ceil
+from pathlib import Path
+from typing import Any
+
 import astropy.constants as ac
 import astropy.io.fits as fits
 import astropy.units as u
@@ -8,14 +12,45 @@ import numpy.polynomial as npp
 import numpy.typing as npt
 import scipy.optimize as sco
 import scipy.signal as scs
-import config
-
+import wx
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from astroquery.simbad import Simbad
-from math import ceil
-from pathlib import Path
-from typing import Any
+
+import config
+import specview
+
+
+class ContinuumDialog(wx.Dialog):
+    def __init__(self, parent: wx.Window, header: fits.Header, data: npt.NDArray[Any], **kwargs):
+        super().__init__(parent, **kwargs)
+        self._specview = specview.Specview(self)
+        display = wx.Display()
+        display_sz = display.GetClientArea()
+        width = int(0.6 * display_sz.GetWidth())
+        height = int(0.6 * display_sz.GetHeight())
+        self._specview.SetMinSize(wx.Size(width=width, height=height))
+
+        btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(self._specview, 1, wx.EXPAND, 0)
+        vbox.Add(btn_sizer, 0, wx.EXPAND | wx.BOTTOM, 5)
+
+        vbox.SetSizeHints(self)
+        self.SetSizer(vbox)
+        vbox_best_sz = self.GetBestSize()
+
+        self.SetSizeHints(vbox_best_sz)
+        self.SetInitialSize(vbox_best_sz)
+
+        self._specview.add_spectrum(data, header)
+        self._continuum_fit = specview.ContinuumFit(self)
+        self._specview.toggle_event_handler(self._continuum_fit)
+
+    @property
+    def continuum(self):
+        return self._continuum_fit.continuum
 
 
 def resample_ref(rec_header: fits.Header, ref_header: fits.Header, ref_data: npt.NDArray[Any]) -> npt.NDArray[Any]:
@@ -162,24 +197,71 @@ def fit_continuum(data: npt.NDArray[Any], lambda_start: float, lambda_step: floa
     return np.asarray(poly(xdata))
 
 
-def create_response(rec_file: Path, ref_file: Path, output_path: Path, mode='cont'):
+def create_response(parent: wx.Window, rec_file: Path, ref_file: Path, output_path: Path, mode='cont'):
     with fits.open(rec_file) as hdu:
         rec_header = hdu[0].header
         rec_data = hdu[0].data
     rec_step = rec_header['CDELT1']
     rec_lambda_start = rec_header['CRVAL1'] + (1 - rec_header['CRPIX1']) * rec_step
+    rec_lambda_end = rec_lambda_start + (rec_data.size - 1) * rec_step
 
     with fits.open(ref_file) as hdu:
         ref_header = hdu[0].header
         ref_data = hdu[0].data
+    if ref_data.shape[0] == 1:
+        ref_data = ref_data[0]
+    # Discard bogus data from reference
+    start_idx = 0
+    while ref_data[start_idx] == 0:
+        start_idx += 1
+    end_idx = -1
+    while ref_data[end_idx] == 0:
+        end_idx -= 1
+    ref_step = ref_header['CDELT1']
+    ref_lambda_start = ref_header['CRVAL1'] + (1 - ref_header['CRPIX1'] + start_idx) * ref_step
+    if start_idx != 0 or end_idx != -1:
+        ref_data = ref_data[start_idx:end_idx + 1]
+        ref_lambda_start += start_idx * ref_step
+        ref_header['CRVAL1'] = ref_lambda_start
+        ref_header['CRPIX1'] = 1.0
+    ref_lambda_end = ref_lambda_start + (ref_data.size - 1) * ref_step
+
+    # Crop recorded spectrum in case it is longer than the reference
+    start_idx = 0
+    if rec_lambda_start < ref_lambda_start:
+        start_idx = int((ref_lambda_start - rec_lambda_start) / rec_step) + 10
+    end_idx = rec_data.size
+    if rec_lambda_end > ref_lambda_end:
+        end_idx = int((ref_lambda_end - rec_lambda_start) / rec_step) - 10
+    if start_idx != 0 or end_idx != rec_data.size:
+        rec_data = rec_data[start_idx:end_idx]
+        rec_header['CRVAL1'] = rec_lambda_start + start_idx * rec_step
+        rec_header['CRPIX1'] = 1.0
+        rec_header['NAXIS1'] = rec_data.size
 
     ref_resampled = resample_ref(rec_header, ref_header, ref_data)
-    ref_resampled = fit_ref_to_recorded(ref_resampled, rec_data)
+    with ContinuumDialog(parent, rec_header, rec_data, title='Recorded') as dlg:
+        dlg_res = dlg.ShowModal()
+        if dlg_res == wx.ID_CANCEL:
+            return
+        rec_continuum = dlg.continuum
+    rec_continuum = rec_continuum / np.max(rec_continuum)
 
-    if mode == 'filt':
-        response = _compute_response_filt(rec_data, ref_resampled, rec_lambda_start, rec_step)
-    else:
-        response = _compute_response_cont(rec_data, ref_resampled, rec_lambda_start, rec_step)
+    with ContinuumDialog(parent, rec_header, ref_resampled, title='Reference') as dlg:
+        dlg_res = dlg.ShowModal()
+        if dlg_res == wx.ID_CANCEL:
+            return
+        ref_continuum = dlg.continuum
+    ref_continuum = ref_continuum / np.max(ref_continuum)
+
+    response = rec_continuum / ref_continuum
+
+    # ref_resampled = fit_ref_to_recorded(ref_resampled, rec_data)
+    #
+    # if mode == 'filt':
+    #     response = _compute_response_filt(rec_data, ref_resampled, rec_lambda_start, rec_step)
+    # else:
+    #     response = _compute_response_cont(rec_data, ref_resampled, rec_lambda_start, rec_step)
 
     resp_header = fits.Header()
     resp_header.add_comment(rec_header['COMMENT'][0])
