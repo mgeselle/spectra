@@ -11,7 +11,7 @@ from scipy.signal import find_peaks
 
 def _find_next_peak(x_ref: Union[SupportsInt, SupportsFloat], x_data: npt.NDArray[Any]):
     stddev = np.std(x_data)
-    peaks, _ = find_peaks(x_data, prominence=stddev * 5)
+    peaks, _ = find_peaks(x_data, prominence=stddev * 5, width=4)
     result = None
     last_delta = None
     for x in peaks:

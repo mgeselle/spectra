@@ -110,9 +110,11 @@ def optimal(input_files: Union[Path, Sequence[Path]],
         header.add_comment('See Horne K., PASP 1986, Vol. 98, p. 609, bibcode: 1986PASP...98..609H')
         header['DATE-OBS'] = str(min_time)
         header['DATE-END'] = str(end_time)
-        header['EXPTIME'] = f'{total_exptime:.1f}'
+        # AAVSO requires this to be of type float
+        header['EXPTIME'] = total_exptime
         jd = (min_time + (end_time - min_time) / 2).jd
-        header['JD'] = f'{jd:.6f}'
+        # AAVSO requires this to be of type float
+        header['JD'] = jd
         if header_overrides is not None:
             for key in header_overrides.keys():
                 header[key] = header_overrides[key]
@@ -191,7 +193,7 @@ def _find_sky_and_signal(data: npt.NDArray[Any]) -> Tuple[int, int, int, int]:
             max_data = mean[i]
     d_low = None
     for i in range(max_idx - 1, -1, -1):
-        if mean[i] < 1.5 * stddev[i]:
+        if mean[i] < 2.0 * stddev[i]:
             d_low = i
             break
     d_high = None

@@ -1,6 +1,6 @@
 from math import ceil
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import astropy.constants as ac
 import astropy.io.fits as fits
@@ -197,7 +197,7 @@ def fit_continuum(data: npt.NDArray[Any], lambda_start: float, lambda_step: floa
     return np.asarray(poly(xdata))
 
 
-def create_response(parent: wx.Window, rec_file: Path, ref_file: Path, output_path: Path, mode='cont'):
+def create_response(parent: Union[wx.Window, None], rec_file: Path, ref_file: Path, output_path: Path, mode='cont'):
     with fits.open(rec_file) as hdu:
         rec_header = hdu[0].header
         rec_data = hdu[0].data
@@ -386,7 +386,7 @@ if __name__ == '__main__':
     rec = list(in_dir.glob('Castor_L*'))[0]
     ref = list(in_dir.glob('Castor-M*'))[0]
 
-    create_response(rec, ref, out_dir, mode='cont')
+    create_response(None, rec, ref, out_dir, mode='cont')
 
     with fits.open(out_dir / rec.name) as r_hdu:
         r_data = r_hdu[0].data
