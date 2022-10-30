@@ -15,7 +15,7 @@ import wx
 import wx.lib.newevent as ne
 from astropy.io import fits
 from matplotlib.axes import Axes
-from matplotlib.backend_bases import MouseEvent, PickEvent, KeyEvent
+from matplotlib.backend_bases import MouseEvent, MouseButton, PickEvent, KeyEvent
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
 from matplotlib.figure import Figure
@@ -231,7 +231,7 @@ class ContinuumFit(SpecEvtHandler, SaveHandler):
         return self._continuum
 
     def _on_click(self, event: MouseEvent):
-        if not event.inaxes or self._continuum_line is None:
+        if not event.inaxes or self._continuum_line is None or event.button != MouseButton.RIGHT:
             return
         x_idx = int((event.xdata - self._xdata[0]) / (self._xdata[1] - self._xdata[0]))
         x = self._xdata[x_idx]
