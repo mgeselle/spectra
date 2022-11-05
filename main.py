@@ -16,7 +16,7 @@ from configgui import CamCfgGUI, TelescopeCfgGui, SpectrometerCfgGui, AavsoCfgGu
 from crop import Crop
 from imgdisplay import ImageDisplay
 from reduce import Reduce
-from specview import Specview, AnnotationHandler, ContinuumFit, PeakMeasureHandler, EVT_ID_FILE_READY
+from specview import Specview, AnnotationHandler, ContinuumFit, CropHandler, PeakMeasureHandler, EVT_ID_FILE_READY
 
 ID_OPEN = wx.NewIdRef()
 ID_SAVE = wx.NewIdRef()
@@ -29,6 +29,7 @@ ID_CFG_CALIB = wx.NewIdRef()
 ID_ANNOTATE = wx.NewIdRef()
 ID_RECTIFY = wx.NewIdRef()
 ID_MEASURE = wx.NewIdRef()
+ID_CROP_SPEC = wx.NewIdRef()
 
 
 class Main(wx.Frame):
@@ -92,10 +93,16 @@ class Main(wx.Frame):
         measure_tool = self._toolbar.AddCheckTool(ID_MEASURE.GetId(), 'Measure', measure_bmp,
                                                   shortHelp='Measure peaks')
 
+        crop_spec_bmp = wx.Bitmap()
+        crop_spec_bmp.LoadFile((str(resource_dir / 'scissors@1x.png')))
+        crop_spec_tool = self._toolbar.AddCheckTool(ID_CROP_SPEC.GetId(), 'Crop', crop_spec_bmp,
+                                                    shortHelp='Crop spectrum')
+
         self._toolbar.Realize()
         self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
         self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
         self._toolbar.EnableTool(ID_MEASURE.GetId(), False)
+        self._toolbar.EnableTool(ID_CROP_SPEC.GetId(), False)
 
         self._content_pane = wx.Panel(self)
         self._image_display = ImageDisplay(self._content_pane)
@@ -135,6 +142,7 @@ class Main(wx.Frame):
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_annotate, annotate_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_rectify, rectify_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_measure, measure_tool)
+        self._toolbar.Bind(wx.EVT_MENU, self._toggle_crop_spec, crop_spec_tool)
         self.Bind(EVT_ID_FILE_READY, lambda evt: self._file_menu.Enable(ID_SAVE.GetId(), True))
 
         display = wx.Display()
@@ -188,6 +196,7 @@ class Main(wx.Frame):
             self._toolbar.EnableTool(ID_ANNOTATE.GetId(), True)
             self._toolbar.EnableTool(ID_RECTIFY.GetId(), True)
             self._toolbar.EnableTool(ID_MEASURE.GetId(), True)
+            self._toolbar.EnableTool(ID_CROP_SPEC.GetId(), True)
         elif header['NAXIS'] == 2:
             data = None
             self.make_specview_visible(False)
@@ -196,6 +205,7 @@ class Main(wx.Frame):
             self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
             self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
             self._toolbar.EnableTool(ID_MEASURE.GetId(), False)
+            self._toolbar.EnableTool(ID_CROP_SPEC.GetId(), False)
 
     def _add_spectrum(self, event: wx.CommandEvent):
         file_name = wxutil.select_file(self)
@@ -237,6 +247,8 @@ class Main(wx.Frame):
             self._toolbar.EnableTool(ID_MEASURE.GetId(), enable)
         if ID_RECTIFY.GetId() != selected_id:
             self._toolbar.EnableTool(ID_RECTIFY.GetId(), enable)
+        if ID_CROP_SPEC.GetId() != selected_id:
+            self._toolbar.EnableTool(ID_CROP_SPEC.GetId(), enable)
 
     def _toggle_annotate(self, event: wx.CommandEvent):
         if event.GetSelection():
@@ -262,6 +274,15 @@ class Main(wx.Frame):
         else:
             self._specview.toggle_event_handler(None)
             self._enable_others(ID_MEASURE.GetId(), True)
+
+    def _toggle_crop_spec(self, event: wx.CommandEvent):
+        if event.GetSelection():
+            self._specview.toggle_event_handler(CropHandler(self))
+            self._enable_others(ID_CROP_SPEC.GetId(), False)
+        else:
+            self._specview.toggle_event_handler(None)
+            self._file_menu.Enable(ID_SAVE.GetId(), False)
+            self._enable_others(ID_CROP_SPEC.GetId(), True)
 
     def _show_calib_file_dialog(self, event: wx.CommandEvent):
         menu, item = Main._disable_before_open(event)

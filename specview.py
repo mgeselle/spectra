@@ -496,6 +496,108 @@ class PeakMeasureHandler(SpecEvtHandler):
         self._figure.canvas.draw_idle()
 
 
+class CropHandler(SpecEvtHandler, SaveHandler):
+    def dispose(self):
+        super().dispose()
+        if self._mouse_cid is not None:
+            self._figure.canvas.mpl_disconnect(self._mouse_cid)
+            self._mouse_cid = None
+        if self._key_cid is not None:
+            self._figure.canvas.mpl_disconnect(self._key_cid)
+            self._key_cid = None
+        if self._low_line is not None:
+            self._low_line.remove()
+            self._low_line = None
+        if self._high_line is not None:
+            self._high_line.remove()
+            self._high_line = None
+
+    def save_file(self, file_path: Path):
+        idx_low, idx_high, lambda_ref, _ = self._get_indexes()
+        header = self._data.header
+        header['CRVAL1'] = lambda_ref
+        header['CRPIX1'] = 1.0
+        data = self._data.data[idx_low:idx_high]
+        hdu = fits.PrimaryHDU(data, header)
+        hdu.writeto(file_path, overwrite=True)
+
+    def init(self, figure: Figure, axes: Axes):
+        super().init(figure, axes)
+        figure.canvas.mpl_connect('button_press_event', self._on_click)
+
+    def __init__(self, parent: wx.Window):
+        super().__init__()
+        self._parent = parent
+        self._mouse_cid = None
+        self._key_cid = None
+        self._lambda_low = None
+        self._lambda_high = None
+        self._low_line = None
+        self._high_line = None
+
+    def _on_click(self, event: MouseEvent):
+        if not event.inaxes:
+            return
+        if event.button == MouseButton.LEFT:
+            self._lambda_low = event.xdata
+            if self._low_line is not None:
+                self._low_line.remove()
+            self._low_line = self._axes.axvline(self._lambda_low, linestyle='--')
+            if self._lambda_high is not None and self._lambda_high <= self._lambda_low:
+                self._lambda_high = None
+                self._high_line.remove()
+                self._high_line = None
+            self._figure.canvas.draw_idle()
+        elif event.button == MouseButton.RIGHT:
+            self._lambda_high = event.xdata
+            if self._high_line is not None:
+                self._high_line.remove()
+            self._high_line = self._axes.axvline(self._lambda_high, linestyle='--')
+            if self._lambda_low is not None and self._lambda_low >= self._lambda_high:
+                self._lambda_low = None
+                self._low_line.remove()
+                self._low_line = None
+            self._figure.canvas.draw_idle()
+        if self._lambda_low is not None and self._lambda_high is not None and self._key_cid is None:
+            self._key_cid = self._figure.canvas.mpl_connect('key_press_event', self._on_key)
+        elif (self._lambda_low is None or self._lambda_high is None) and self._key_cid is not None:
+            self._figure.canvas.mpl_disconnect(self._key_cid)
+            self._key_cid = None
+
+    def _on_key(self, event: KeyEvent):
+        if event.key != 'enter':
+            return
+        self._figure.canvas.mpl_disconnect(self._key_cid)
+        self._low_line.remove()
+        self._low_line = None
+        self._high_line.remove()
+        self._high_line = None
+        idx_low, idx_high, x_low, x_high = self._get_indexes()
+        xdata = np.linspace(x_low, x_high,
+                            num=idx_high - idx_low, endpoint=False)
+        ydata = self._data.data[idx_low:idx_high]
+        self._data.line.set_data(xdata, ydata)
+        self._axes.autoscale()
+        self._axes.relim()
+        self._figure.canvas.draw_idle()
+        self._parent.QueueEvent(FileReadyEvent())
+
+    def _get_indexes(self):
+        header = self._data.header
+        lambda_step = header['CDELT1']
+        lambda_ref = header['CRVAL1'] + (1 - header['CRPIX1']) * lambda_step
+        idx_low = int((self._lambda_low - lambda_ref) / lambda_step)
+        if idx_low < 0:
+            idx_low = 0
+        idx_high = int((self._lambda_high - lambda_ref) / lambda_step)
+        if idx_high > self._data.data.size:
+            idx_high = self._data.data.size
+        x_low = lambda_ref + idx_low * lambda_step
+        x_high = lambda_ref + idx_high * lambda_step
+
+        return idx_low, idx_high, x_low, x_high
+
+
 class Specview(wx.Panel):
     def __init__(self, parent: wx.Window, **kwargs):
         super().__init__(parent, **kwargs)
