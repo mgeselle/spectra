@@ -1,5 +1,5 @@
 from astropy.io import fits
-from astropy.visualization import ImageNormalize, MinMaxInterval, AsinhStretch
+from astropy.visualization import ImageNormalize, MinMaxInterval, PercentileInterval, AsinhStretch
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
 from matplotlib.figure import Figure
@@ -33,7 +33,7 @@ class ImageDisplay(wx.Panel):
         with fits.open(file_path) as in_hdu_l:
             self._axes.cla()
             self._image = in_hdu_l[0].data
-            norm = ImageNormalize(self._image, interval=MinMaxInterval(), stretch=AsinhStretch())
+            norm = ImageNormalize(self._image, interval=PercentileInterval(90.0), stretch=AsinhStretch())
             self._axes.imshow(self._image, origin='lower', norm=norm)
             self._canvas.draw()
 
