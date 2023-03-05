@@ -168,12 +168,14 @@ class Reduce(TaskDialog):
         else:
             master_path = wxutil.ensure_dir_exists(master_dir, 'master', self)
         bias_pattern = self._bias_text.GetValue().strip()
-        if not bias_pattern:
-            return
-        bias_path = wxutil.find_files_by_pattern(master_path, bias_pattern, 'bias', self,
-                                                 unique=True)
-        if not bias_path:
-            return
+        if bias_pattern:
+            bias_path = wxutil.find_files_by_pattern(master_path, bias_pattern, 'bias', self,
+                                                     unique=True)
+            if not bias_path:
+                return
+        else:
+            bias_path = None
+
         dark_pattern = self._dark_text.GetValue().strip()
         if not dark_pattern:
             return

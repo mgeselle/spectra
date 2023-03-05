@@ -7,7 +7,7 @@ from astropy.io import fits
 
 
 class Dark:
-    def __init__(self, bias_path: Path, dark_files: Sequence[Path]):
+    def __init__(self, bias_path: Union[Path, None], dark_files: Sequence[Path]):
         self._bias = bias_path
         self._darks_by_exposure = dict()
         for dark in dark_files:
@@ -60,6 +60,8 @@ class Dark:
         return result
 
     def _correct_scaled(self, in_data: npt.NDArray[Any], exp_time: float) -> npt.NDArray[Any]:
+        if self._bias is None:
+            return in_data
         with fits.open(self._bias) as bias_hdu_l:
             bias_data = np.asarray(bias_hdu_l[0].data, dtype=np.float64)
         dark_path = self._pick_dark(exp_time)
