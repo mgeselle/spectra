@@ -17,38 +17,36 @@ class Combine(TaskDialog):
         self.progress_title = 'Combining...'
         self.message_template = u'\u00a0' * 40
 
-        panel = wx.Panel(self)
-
         text_chars = 40
-        in_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Input Directory:')
-        self._in_dir_text = wx.TextCtrl(panel)
+        in_dir_label = wx.StaticText(self, wx.ID_ANY, 'Input Directory:')
+        self._in_dir_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._in_dir_text, text_chars)
         folder_bmp = wx.ArtProvider.GetBitmap(wx.ART_FOLDER_OPEN, wx.ART_BUTTON)
         self._in_dir_btn_id = wx.NewIdRef()
-        in_dir_btn = wx.BitmapButton(panel, id=self._in_dir_btn_id.GetId(), bitmap=folder_bmp)
+        in_dir_btn = wx.BitmapButton(self, id=self._in_dir_btn_id.GetId(), bitmap=folder_bmp)
         in_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        in_dir_sizer.Add(self._in_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        in_dir_sizer.Add(self._in_dir_text, 1, wx.EXPAND | wx.ALIGN_LEFT)
         in_dir_sizer.Add(in_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        base_name_label = wx.StaticText(panel, wx.ID_ANY, 'Image Basename:')
-        self._base_name_text = wx.TextCtrl(panel)
+        base_name_label = wx.StaticText(self, wx.ID_ANY, 'Image Basename:')
+        self._base_name_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._base_name_text, text_chars)
 
-        out_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Output Directory:')
-        self._out_dir_text = wx.TextCtrl(panel)
+        out_dir_label = wx.StaticText(self, wx.ID_ANY, 'Output Directory:')
+        self._out_dir_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._out_dir_text, text_chars)
         self._out_dir_btn_id = wx.NewIdRef()
-        out_dir_btn = wx.BitmapButton(panel, id=self._out_dir_btn_id.GetId(), bitmap=folder_bmp)
+        out_dir_btn = wx.BitmapButton(self, id=self._out_dir_btn_id.GetId(), bitmap=folder_bmp)
         out_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        out_dir_sizer.Add(self._out_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        out_dir_sizer.Add(self._out_dir_text, 1, wx.EXPAND | wx.ALIGN_LEFT)
         out_dir_sizer.Add(out_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        out_name_label = wx.StaticText(panel, wx.ID_ANY, 'Output Name:')
-        self._out_name_text = wx.TextCtrl(panel)
+        out_name_label = wx.StaticText(self, wx.ID_ANY, 'Output Name:')
+        self._out_name_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._out_name_text, text_chars)
 
-        method_label = wx.StaticText(panel, wx.ID_ANY, 'Method:')
-        self._method_combo = wx.ComboBox(panel, value=Combine._methods[0],
+        method_label = wx.StaticText(self, wx.ID_ANY, 'Method:')
+        self._method_combo = wx.ComboBox(self, value=Combine._methods[0],
                                          choices=Combine._methods,
                                          style=wx.CB_READONLY | wx.CB_DROPDOWN)
         wxutil.size_text_by_chars(self._method_combo, 8)
@@ -71,10 +69,8 @@ class Combine(TaskDialog):
         vbox.Add(grid, 0, wx.ALL, border=10)
         vbox.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 

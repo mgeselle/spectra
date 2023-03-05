@@ -25,73 +25,71 @@ class Reduce(TaskDialog):
         self.SetTitle('Reduce Images')
         self.progress_title = 'Reducing...'
 
-        panel = wx.Panel(self)
-
         text_chars = 40
-        in_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Input Directory:')
-        self._in_dir_text = wx.TextCtrl(panel)
+        in_dir_label = wx.StaticText(self, wx.ID_ANY, 'Input Directory:')
+        self._in_dir_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._in_dir_text, text_chars)
         folder_bmp = wx.ArtProvider.GetBitmap(wx.ART_FOLDER_OPEN, wx.ART_BUTTON)
         self._in_dir_btn_id = wx.NewIdRef()
-        in_dir_btn = wx.BitmapButton(panel, id=self._in_dir_btn_id.GetId(), bitmap=folder_bmp)
+        in_dir_btn = wx.BitmapButton(self, id=self._in_dir_btn_id.GetId(), bitmap=folder_bmp)
         in_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        in_dir_sizer.Add(self._in_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        in_dir_sizer.Add(self._in_dir_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
         in_dir_sizer.Add(in_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        master_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Master Directory:')
-        self._master_dir_text = wx.TextCtrl(panel)
+        master_dir_label = wx.StaticText(self, wx.ID_ANY, 'Master Directory:')
+        self._master_dir_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._master_dir_text, text_chars)
         self._master_dir_btn_id = wx.NewIdRef()
-        master_dir_btn = wx.BitmapButton(panel, id=self._master_dir_btn_id.GetId(), bitmap=folder_bmp)
+        master_dir_btn = wx.BitmapButton(self, id=self._master_dir_btn_id.GetId(), bitmap=folder_bmp)
         master_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        master_dir_sizer.Add(self._master_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        master_dir_sizer.Add(self._master_dir_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
         master_dir_sizer.Add(master_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        output_dir_label = wx.StaticText(panel, wx.ID_ANY, 'Output Directory:')
-        self._output_dir_text = wx.TextCtrl(panel)
+        output_dir_label = wx.StaticText(self, wx.ID_ANY, 'Output Directory:')
+        self._output_dir_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._output_dir_text, text_chars)
         self._output_dir_btn_id = wx.NewIdRef()
-        output_dir_btn = wx.BitmapButton(panel, id=self._output_dir_btn_id.GetId(), bitmap=folder_bmp)
+        output_dir_btn = wx.BitmapButton(self, id=self._output_dir_btn_id.GetId(), bitmap=folder_bmp)
         output_dir_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        output_dir_sizer.Add(self._output_dir_text, 1, wx.EXPAND | wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        output_dir_sizer.Add(self._output_dir_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
         output_dir_sizer.Add(output_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        bias_label = wx.StaticText(panel, wx.ID_ANY, 'Bias Pattern:')
-        self._bias_text = wx.TextCtrl(panel)
+        bias_label = wx.StaticText(self, wx.ID_ANY, 'Bias Pattern:')
+        self._bias_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._bias_text, text_chars)
 
-        dark_label = wx.StaticText(panel, wx.ID_ANY, 'Dark Pattern:')
-        self._dark_text = wx.TextCtrl(panel)
+        dark_label = wx.StaticText(self, wx.ID_ANY, 'Dark Pattern:')
+        self._dark_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._dark_text, text_chars)
 
-        flat_label = wx.StaticText(panel, wx.ID_ANY, 'Flat Pattern:')
-        self._flat_text = wx.TextCtrl(panel)
+        flat_label = wx.StaticText(self, wx.ID_ANY, 'Flat Pattern:')
+        self._flat_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._flat_text, text_chars)
 
-        calib_label = wx.StaticText(panel, wx.ID_ANY, 'Calibration Pattern:')
-        self._calib_text = wx.TextCtrl(panel)
+        calib_label = wx.StaticText(self, wx.ID_ANY, 'Calibration Pattern:')
+        self._calib_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._calib_text, text_chars)
 
-        pgm_label = wx.StaticText(panel, wx.ID_ANY, 'Program Pattern:')
-        self._pgm_text = wx.TextCtrl(panel)
+        pgm_label = wx.StaticText(self, wx.ID_ANY, 'Program Pattern:')
+        self._pgm_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._pgm_text, text_chars)
 
-        eq_cfg_label = wx.StaticText(panel, wx.ID_ANY, 'Equipment Configuration:')
+        eq_cfg_label = wx.StaticText(self, wx.ID_ANY, 'Equipment Configuration:')
         config_values = ['']
         config_values[1:] = Config.get().get_aavso_config_names()
-        self._eq_cfg_combo = wx.ComboBox(panel, value=config_values[0], choices=config_values,
+        self._eq_cfg_combo = wx.ComboBox(self, value=config_values[0], choices=config_values,
                                          style=wx.CB_DROPDOWN | wx.CB_READONLY | wx.CB_SORT)
         wxutil.size_text_by_chars(self._eq_cfg_combo, 30)
 
-        loc_label = wx.StaticText(panel, wx.ID_ANY, 'Location Name:')
+        loc_label = wx.StaticText(self, wx.ID_ANY, 'Location Name:')
         loc_values = ['']
         loc_values[1:] = Config.get().get_location_names()
-        self._loc_combo = wx.ComboBox(panel, value=loc_values[0], choices=loc_values,
+        self._loc_combo = wx.ComboBox(self, value=loc_values[0], choices=loc_values,
                                       style=wx.CB_DROPDOWN | wx.CB_READONLY | wx.CB_SORT)
         wxutil.size_text_by_chars(self._loc_combo, 30)
 
-        obj_label = wx.StaticText(panel, wx.ID_ANY, 'Object:')
-        self._obj_entry = wx.TextCtrl(panel)
+        obj_label = wx.StaticText(self, wx.ID_ANY, 'Object:')
+        self._obj_entry = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._obj_entry, text_chars)
 
         vbox = wx.BoxSizer(wx.VERTICAL)
@@ -124,10 +122,8 @@ class Reduce(TaskDialog):
         vbox.Add(grid, 0, wx.ALL, border=10)
         vbox.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 

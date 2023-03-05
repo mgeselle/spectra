@@ -13,23 +13,22 @@ class CamCfgGUI(wx.Dialog):
         super().__init__(parent, **kwargs)
         self.SetTitle('Camera Configuration')
 
-        panel = wx.Panel(self)
-        cam_label = wx.StaticText(panel, wx.ID_ANY, 'Name:')
-        self._cam_combo = wx.ComboBox(panel, wx.ID_ANY, choices=Config.get().get_camera_configs(),
+        cam_label = wx.StaticText(self, wx.ID_ANY, 'Name:')
+        self._cam_combo = wx.ComboBox(self, wx.ID_ANY, choices=Config.get().get_camera_configs(),
                                       style=wx.CB_DROPDOWN | wx.CB_SORT)
         wxutil.size_text_by_chars(self._cam_combo, 30)
 
-        ron_label = wx.StaticText(panel, wx.ID_ANY, 'Read-Out Noise [e-]:')
-        self._ron_entry = wx.TextCtrl(panel, id=wx.ID_ANY, validator=validator.DecimalValidator())
+        ron_label = wx.StaticText(self, wx.ID_ANY, 'Read-Out Noise [e-]:')
+        self._ron_entry = wx.TextCtrl(self, id=wx.ID_ANY, validator=validator.DecimalValidator())
         wxutil.size_text_by_chars(self._ron_entry, 5)
 
-        gain_label = wx.StaticText(panel, wx.ID_ANY, 'Gain [e-/ADU]:')
-        self._gain_entry = wx.TextCtrl(panel, id=wx.ID_ANY, validator=validator.DecimalValidator())
+        gain_label = wx.StaticText(self, wx.ID_ANY, 'Gain [e-/ADU]:')
+        self._gain_entry = wx.TextCtrl(self, id=wx.ID_ANY, validator=validator.DecimalValidator())
         wxutil.size_text_by_chars(self._gain_entry, 5)
 
-        self._save_btn = wx.Button(panel, id=wx.ID_SAVE)
-        self._delete_btn = wx.Button(panel, id=wx.ID_DELETE)
-        self._cancel_btn = wx.Button(panel, id=wx.ID_CANCEL)
+        self._save_btn = wx.Button(self, id=wx.ID_SAVE)
+        self._delete_btn = wx.Button(self, id=wx.ID_DELETE)
+        self._cancel_btn = wx.Button(self, id=wx.ID_CANCEL)
 
         grid = wx.FlexGridSizer(rows=3, cols=2, hgap=5, vgap=5)
         grid.Add(cam_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
@@ -56,12 +55,8 @@ class CamCfgGUI(wx.Dialog):
         vbox.Add(grid, 0, wx.ALL | wx.EXPAND, 10)
         vbox.Add(btn_sizer_s, 0, wx.TOP | wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 10)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        sz = panel.GetBestSize()
-        self.SetClientSize(sz)
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
@@ -115,23 +110,22 @@ class TelescopeCfgGui(wx.Dialog):
         super().__init__(parent, **kwargs)
         self.SetTitle('Telescope Configuration')
 
-        panel = wx.Panel(self)
-        name_label = wx.StaticText(panel, label='Name:')
+        name_label = wx.StaticText(self, label='Name:')
         names = Config.get().get_telescope_config_names()
-        self._name_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
+        self._name_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
         wxutil.size_text_by_chars(self._name_combo, 30)
 
-        apt_label = wx.StaticText(panel, label='Aperture [mm]:')
-        self._apt_entry = wxli.IntCtrl(panel, min=100)
+        apt_label = wx.StaticText(self, label='Aperture [mm]:')
+        self._apt_entry = wxli.IntCtrl(self, min=100)
         wxutil.size_text_by_chars(self._apt_entry, 5)
 
-        fl_label = wx.StaticText(panel, label='Focal Length [mm]:')
-        self._fl_entry = wxli.IntCtrl(panel, min=50)
+        fl_label = wx.StaticText(self, label='Focal Length [mm]:')
+        self._fl_entry = wxli.IntCtrl(self, min=50)
         wxutil.size_text_by_chars(self._fl_entry, 5)
 
-        self._save_btn = wx.Button(panel, id=wx.ID_SAVE)
-        self._delete_btn = wx.Button(panel, id=wx.ID_DELETE)
-        self._cancel_btn = wx.Button(panel, id=wx.ID_CANCEL)
+        self._save_btn = wx.Button(self, id=wx.ID_SAVE)
+        self._delete_btn = wx.Button(self, id=wx.ID_DELETE)
+        self._cancel_btn = wx.Button(self, id=wx.ID_CANCEL)
 
         grid = wx.FlexGridSizer(rows=3, cols=2, hgap=5, vgap=5)
         grid.Add(name_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
@@ -163,12 +157,9 @@ class TelescopeCfgGui(wx.Dialog):
         self.Bind(wx.EVT_BUTTON, self._delete, id=wx.ID_DELETE)
         self.Bind(wx.EVT_BUTTON, self._cancel, id=wx.CANCEL)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
+        self.SetSizer(vbox)
+        self.Fit()
 
-        sz = panel.GetBestSize()
-        self.SetClientSize(sz)
-        self.Layout()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
@@ -217,23 +208,22 @@ class SpectrometerCfgGui(wx.Dialog):
         super().__init__(parent, **kwargs)
         self.SetTitle('Spectrometer Configuration')
 
-        panel = wx.Panel(self)
-        name_label = wx.StaticText(panel, label='Name:')
+        name_label = wx.StaticText(self, label='Name:')
         names = Config.get().get_spectro_config_names()
-        self._name_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
+        self._name_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
         wxutil.size_text_by_chars(self._name_combo, 30)
 
-        type_label = wx.StaticText(panel, label='Type:')
-        self._type_entry = wx.TextCtrl(panel)
+        type_label = wx.StaticText(self, label='Type:')
+        self._type_entry = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._type_entry, 30)
 
-        lines_label = wx.StaticText(panel, label='Lines/mm:')
-        self._lines_entry = wxli.IntCtrl(panel, min=100)
+        lines_label = wx.StaticText(self, label='Lines/mm:')
+        self._lines_entry = wxli.IntCtrl(self, min=100)
         wxutil.size_text_by_chars(self._lines_entry, 5)
 
-        self._save_btn = wx.Button(panel, id=wx.ID_SAVE)
-        self._delete_btn = wx.Button(panel, id=wx.ID_DELETE)
-        self._cancel_btn = wx.Button(panel, id=wx.ID_CANCEL)
+        self._save_btn = wx.Button(self, id=wx.ID_SAVE)
+        self._delete_btn = wx.Button(self, id=wx.ID_DELETE)
+        self._cancel_btn = wx.Button(self, id=wx.ID_CANCEL)
 
         grid = wx.FlexGridSizer(rows=3, cols=2, hgap=5, vgap=5)
         grid.Add(name_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
@@ -265,12 +255,8 @@ class SpectrometerCfgGui(wx.Dialog):
         self.Bind(wx.EVT_BUTTON, self._delete, id=wx.ID_DELETE)
         self.Bind(wx.EVT_BUTTON, self._cancel, id=wx.CANCEL)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        sz = panel.GetBestSize()
-        self.SetClientSize(sz)
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
@@ -319,30 +305,29 @@ class AavsoCfgGui(wx.Dialog):
         super().__init__(parent, **kwargs)
         self.SetTitle('AAVSO Configuration')
 
-        panel = wx.Panel(self)
-        name_label = wx.StaticText(panel, label='Name:')
+        name_label = wx.StaticText(self, label='Name:')
         names = Config.get().get_aavso_config_names()
-        self._name_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
+        self._name_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
         wxutil.size_text_by_chars(self._name_combo, 30)
 
-        tel_label = wx.StaticText(panel, label='Telescope:')
+        tel_label = wx.StaticText(self, label='Telescope:')
         names = Config.get().get_telescope_config_names()
-        self._tel_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT | wx.CB_READONLY)
+        self._tel_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT | wx.CB_READONLY)
         wxutil.size_text_by_chars(self._tel_combo, 30)
 
-        spec_label = wx.StaticText(panel, label='Spectrometer:')
+        spec_label = wx.StaticText(self, label='Spectrometer:')
         names = Config.get().get_spectro_config_names()
-        self._spec_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT | wx.CB_READONLY)
+        self._spec_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT | wx.CB_READONLY)
         wxutil.size_text_by_chars(self._spec_combo, 30)
 
-        ccd_label = wx.StaticText(panel, label='Camera:')
+        ccd_label = wx.StaticText(self, label='Camera:')
         names = Config.get().get_camera_configs()
-        self._ccd_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT | wx.CB_READONLY)
+        self._ccd_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT | wx.CB_READONLY)
         wxutil.size_text_by_chars(self._ccd_combo, 30)
 
-        self._save_btn = wx.Button(panel, id=wx.ID_SAVE)
-        self._delete_btn = wx.Button(panel, id=wx.ID_DELETE)
-        self._cancel_btn = wx.Button(panel, id=wx.ID_CANCEL)
+        self._save_btn = wx.Button(self, id=wx.ID_SAVE)
+        self._delete_btn = wx.Button(self, id=wx.ID_DELETE)
+        self._cancel_btn = wx.Button(self, id=wx.ID_CANCEL)
 
         grid = wx.FlexGridSizer(rows=4, cols=2, hgap=5, vgap=5)
         grid.Add(name_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
@@ -376,12 +361,8 @@ class AavsoCfgGui(wx.Dialog):
         self.Bind(wx.EVT_BUTTON, self._delete, id=wx.ID_DELETE)
         self.Bind(wx.EVT_BUTTON, self._cancel, id=wx.CANCEL)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        sz = panel.GetBestSize()
-        self.SetClientSize(sz)
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
@@ -437,28 +418,27 @@ class LocationCfgGui(wx.Dialog):
         super().__init__(parent, **kwargs)
         self.SetTitle('Location Configuration')
 
-        panel = wx.Panel(self)
-        name_label = wx.StaticText(panel, label='Name:')
+        name_label = wx.StaticText(self, label='Name:')
         names = Config.get().get_location_names()
-        self._name_combo = wx.ComboBox(panel, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
+        self._name_combo = wx.ComboBox(self, choices=names, style=wx.CB_DROPDOWN | wx.CB_SORT)
         wxutil.size_text_by_chars(self._name_combo, 30)
 
-        lat_label = wx.StaticText(panel, label='Latitude [hh mm [ss]]:')
-        self._lat_entry = wx.TextCtrl(panel)
+        lat_label = wx.StaticText(self, label='Latitude [hh mm [ss]]:')
+        self._lat_entry = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._lat_entry, 12)
 
-        lon_label = wx.StaticText(panel, label='Longitude [hh mm [ss]]:')
-        self._lon_entry = wx.TextCtrl(panel)
+        lon_label = wx.StaticText(self, label='Longitude [hh mm [ss]]:')
+        self._lon_entry = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._lon_entry, 12)
 
-        alt_label = wx.StaticText(panel, label='Altitude [m]:')
-        self._alt_entry = wxli.IntCtrl(panel, min=-100)
+        alt_label = wx.StaticText(self, label='Altitude [m]:')
+        self._alt_entry = wxli.IntCtrl(self, min=-100)
         wxutil.size_text_by_chars(self._alt_entry, 4)
         self._alt_entry.SetValue(0)
 
-        self._save_btn = wx.Button(panel, id=wx.ID_SAVE)
-        self._delete_btn = wx.Button(panel, id=wx.ID_DELETE)
-        self._cancel_btn = wx.Button(panel, id=wx.ID_CANCEL)
+        self._save_btn = wx.Button(self, id=wx.ID_SAVE)
+        self._delete_btn = wx.Button(self, id=wx.ID_DELETE)
+        self._cancel_btn = wx.Button(self, id=wx.ID_CANCEL)
 
         grid = wx.FlexGridSizer(rows=4, cols=2, hgap=5, vgap=5)
         grid.Add(name_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
@@ -492,12 +472,8 @@ class LocationCfgGui(wx.Dialog):
         self.Bind(wx.EVT_BUTTON, self._delete, id=wx.ID_DELETE)
         self.Bind(wx.EVT_BUTTON, self._cancel, id=wx.CANCEL)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        sz = panel.GetBestSize()
-        self.SetClientSize(sz)
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
@@ -555,9 +531,8 @@ class AavsoObscodeCfgGui(wx.Dialog):
         super().__init__(parent, **kwargs)
         self.SetTitle('AAVSO Observer Code')
 
-        panel = wx.Panel(self)
-        obs_label = wx.StaticText(panel, label='Observer Code:')
-        self._obs_entry = wx.TextCtrl(panel)
+        obs_label = wx.StaticText(self, label='Observer Code:')
+        self._obs_entry = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._obs_entry, 10)
         self._obs_entry.SetValue(Config.get().get_aavso_obscode())
 
@@ -572,12 +547,8 @@ class AavsoObscodeCfgGui(wx.Dialog):
 
         self.Bind(wx.EVT_BUTTON, self._save_or_cancel)
 
-        panel.SetSizer(vbox)
-        panel.Fit()
-
-        sz = panel.GetBestSize()
-        self.SetClientSize(sz)
-        self.Layout()
+        self.SetSizer(vbox)
+        self.Fit()
         sz = self.GetBestSize()
         self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
 
