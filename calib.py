@@ -344,7 +344,11 @@ class CalibFileDialog(wx.Dialog):
 
 def find_peaks(data: npt.NDArray[Any]) -> Union[Tuple[npt.NDArray[Any], Sequence[float]], None]:
     prominence = np.max(data) / 20
-    peaks, props = signal.find_peaks(data, prominence=prominence, width=(2, 16))
+    max_width = 16
+    peaks, props = signal.find_peaks(data, prominence=prominence, width=(max_width / 4, max_width))
+    while peaks.shape[0] < 4 and max_width < data.shape[1] / 10:
+        max_width = max_width + 4
+        peaks, props = signal.find_peaks(data, prominence=prominence, width=(max_width / 4, max_width))
     center_peak = None
     min_peak_dist = None
     for peak_no in range(0, peaks.shape[0]):

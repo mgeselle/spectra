@@ -192,15 +192,20 @@ def _find_sky_and_signal(data: npt.NDArray[Any]) -> Tuple[int, int, int, int]:
             max_idx = i
             max_data = mean[i]
     d_low = None
-    for i in range(max_idx - 1, -1, -1):
-        if mean[i] < 2.0 * stddev[i]:
-            d_low = i
-            break
+    factor = 1.5
+    while d_low is None:
+        for i in range(max_idx - 1, -1, -1):
+            if mean[i] < factor * stddev[i]:
+                d_low = i
+                break
+        factor = factor + 0.5
     d_high = None
-    for i in range(max_idx + 1, mean.shape[0]):
-        if mean[i] < 1.5 * stddev[i]:
-            d_high = i
-            break
+    while d_high is None:
+        for i in range(max_idx + 1, mean.shape[0]):
+            if mean[i] < factor * stddev[i]:
+                d_high = i
+                break
+        factor = factor + 0.5
     if d_low > 20:
         sky_low = d_low - 10
     else:
