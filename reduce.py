@@ -13,6 +13,7 @@ from taskdialog import TaskDialog
 from rotate import Rotate
 from slant import Slant
 import util
+import wx.lib.intctrl as wxli
 import wxutil
 
 
@@ -90,6 +91,16 @@ class Reduce(TaskDialog):
         self._pgm_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._pgm_text, text_chars)
 
+        limits_label = wx.StaticText(self, wx.ID_ANY, 'Y Limits:')
+        self._y_lo_text = wxli.IntCtrl(self, min=0, allow_none=True, value=None)
+        wxutil.size_text_by_chars(self._y_lo_text, 5)
+        self._y_hi_text = wxli.IntCtrl(self, min=0, allow_none=True, value=None)
+        wxutil.size_text_by_chars(self._y_hi_text, 5)
+        limits_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        limits_sizer.Add(self._y_lo_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        limits_sizer.AddSpacer(10)
+        limits_sizer.Add(self._y_hi_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+
         eq_cfg_label = wx.StaticText(self, wx.ID_ANY, 'Equipment Configuration:')
         config_values = ['']
         config_values[1:] = Config.get().get_aavso_config_names()
@@ -109,7 +120,7 @@ class Reduce(TaskDialog):
         wxutil.size_text_by_chars(self._obj_entry, text_chars)
 
         vbox = wx.BoxSizer(wx.VERTICAL)
-        grid = wx.FlexGridSizer(rows=11, cols=2, hgap=5, vgap=5)
+        grid = wx.FlexGridSizer(rows=12, cols=2, hgap=5, vgap=5)
         grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(in_dir_sizer, 1, wx.ALIGN_LEFT)
         grid.Add(master_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -126,6 +137,8 @@ class Reduce(TaskDialog):
         grid.Add(self._calib_text, 1, wx.ALIGN_LEFT)
         grid.Add(pgm_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._pgm_text, 1, wx.ALIGN_LEFT)
+        grid.Add(limits_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(limits_sizer, 1, wx.ALIGN_LEFT)
         grid.Add(eq_cfg_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._eq_cfg_combo, 1, wx.ALIGN_LEFT)
         grid.Add(loc_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -227,6 +240,14 @@ class Reduce(TaskDialog):
         output_path = wxutil.create_dir(output_dir, 'output', self)
         if not output_path:
             return
+        y_lo = self._y_lo_text.GetValue()
+        y_hi = self._y_hi_text.GetValue()
+        if y_lo is None or y_hi is None:
+            limits = None
+        elif y_lo > y_hi:
+            limits = (y_hi, y_lo)
+        else:
+            limits = (y_lo, y_hi)
         eq_cfg_name = self._eq_cfg_combo.GetValue()
         eq_cfg = Config.get().get_aavso_config(eq_cfg_name)
         cam_cfg_name = eq_cfg.ccd
@@ -247,6 +268,7 @@ class Reduce(TaskDialog):
                                      calib_file=calib_path,
                                      cam_cfg_name=cam_cfg_name,
                                      header_overrides=header_overrides,
+                                     limits=limits,
                                      bias_path=bias_path,
                                      dark_files=dark_files,
                                      flat_path=flat_file,
