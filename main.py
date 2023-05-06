@@ -1,7 +1,7 @@
 import numpy as np
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Union
 
 import wx
 from astropy.io import fits
@@ -47,6 +47,7 @@ class Main(wx.Frame):
         self._file_menu.Enable(ID_ADD_SP.GetId(), False)
         header_item = self._file_menu.Append(wx.ID_ANY, 'Show &Header')
         objname_item = self._file_menu.Append(wx.ID_ANY, 'Set Object &Name...')
+        logfile_item = self._file_menu.Append(wx.ID_ANY, "Show &Log Window")
         self._file_menu.AppendSeparator()
         exit_item = self._file_menu.Append(wx.ID_EXIT)
         menubar.Append(self._file_menu, '&File')
@@ -154,6 +155,27 @@ class Main(wx.Frame):
         if height < min_sz.GetHeight():
             height = min_sz.GetHeight()
         self.SetMinClientSize(wx.Size(width, height))
+
+        class SpecLogWindow(wx.LogWindow):
+            def __init__(self, parent, callback):
+                super().__init__(parent, "Spectra Log", show=False, passToOld=False)
+                self.callback = callback
+                self.showing = False
+
+            def OnFrameClose(self, frame):
+                super().OnFrameClose(frame)
+                if self.showing:
+                    self.callback()
+                return True
+
+            def Show(self, show=True):
+                super().Show(show)
+                self.showing = show
+
+        self._log_window = SpecLogWindow(self,
+                                         lambda: self._enable_after_close(None, self._file_menu, logfile_item.GetId()))
+        self.Bind(wx.EVT_MENU, self._show_log_window, logfile_item)
+        wx.Log.SetActiveTarget(self._log_window)
 
     def make_specview_visible(self, visible: bool):
         if visible == self._specview_visible:
@@ -399,16 +421,27 @@ class Main(wx.Frame):
         return menu, item
 
     @staticmethod
-    def _enable_after_close(event: wx.ShowEvent, menu: wx.Menu, item_id: int):
-        if not event.IsShown():
-            menu.Enable(item_id, True)
-            event.GetEventObject().Destroy()
+    def _enable_after_close(event: Union[None, wx.ShowEvent], menu: wx.Menu, item_id: int):
+        if not event or not event.IsShown():
+            try:
+                menu.Enable(item_id, True)
+                if event:
+                    event.GetEventObject().Destroy()
+            except RuntimeError:
+                # Prevent ugly error message on exit when log window is being shown
+                pass
 
     @staticmethod
     def _show_dialog(event: wx.CommandEvent, dialog: wx.Dialog):
         menu, item = Main._disable_before_open(event)
         dialog.Bind(wx.EVT_SHOW, lambda evt: Main._enable_after_close(evt, menu, item))
         dialog.Show()
+
+    def _show_log_window(self, event: wx.CommandEvent):
+        Main._disable_before_open(event)
+        self._log_window.Show()
+        wx.LogMessage("Showing Log window.")
+
 
 
 if __name__ == '__main__':
