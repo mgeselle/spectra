@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
-from typing import Union, Sequence, Dict
+from dataclasses import dataclass
+from typing import Union, Sequence, Dict, Tuple
 import wx
 
 import flat
@@ -13,6 +14,21 @@ from rotate import Rotate
 from slant import Slant
 import util
 import wxutil
+
+
+@dataclass
+class ReduceParams:
+    output_path: Path
+    calib_file: Path
+    cam_cfg_name: str
+    header_overrides: Dict
+    # Optional explicit limits for simple extraction without rotation
+    limits: Union[None , Tuple[int, int]] = None
+    # We might just want to look at a calibration spectrum -> the other files might not be specified
+    bias_path: Union[None , Path] = None
+    dark_files: Union[None , Sequence[Path]] = None
+    flat_path: Union[None , Path] = None
+    pgm_files: Union[None , Path , Sequence[Path]] = None
 
 
 class Reduce(TaskDialog):
@@ -178,10 +194,11 @@ class Reduce(TaskDialog):
 
         dark_pattern = self._dark_text.GetValue().strip()
         if not dark_pattern:
-            return
-        dark_files = wxutil.find_files_by_pattern(master_path, dark_pattern, 'dark', self)
-        if not dark_files:
-            return
+            dark_files = None
+        else:
+            dark_files = wxutil.find_files_by_pattern(master_path, dark_pattern, 'dark', self)
+            if not dark_files:
+                return
         flat_pattern = self._flat_text.GetValue().strip()
         if flat_pattern:
             flat_file = wxutil.find_files_by_pattern(master_path, flat_pattern, 'flat', self,
@@ -192,10 +209,14 @@ class Reduce(TaskDialog):
             flat_file = None
         pgm_pattern = self._pgm_text.GetValue().strip()
         if not pgm_pattern:
-            return
-        pgm_files = wxutil.find_files_by_pattern(input_path, pgm_pattern, 'program', self)
-        if not pgm_files:
-            return
+            pgm_files = None
+        else:
+            pgm_files = wxutil.find_files_by_pattern(input_path, pgm_pattern, 'program', self)
+            if not pgm_files:
+                return
+            if isinstance(pgm_files, Path):
+                pgm_files = (pgm_files,)
+
         calib_pattern = self._calib_text.GetValue().strip()
         if not calib_pattern:
             return
@@ -222,94 +243,183 @@ class Reduce(TaskDialog):
         if loc_name:
             header_overrides['AAV_SITE'] = loc_name
 
+        reduce_params = ReduceParams(output_path=output_path,
+                                     calib_file=calib_path,
+                                     cam_cfg_name=cam_cfg_name,
+                                     header_overrides=header_overrides,
+                                     bias_path=bias_path,
+                                     dark_files=dark_files,
+                                     flat_path=flat_file,
+                                     pgm_files=pgm_files)
+
         dark_args = [bias_path, dark_files, flat_file, pgm_files, calib_path, output_path, cam_cfg_name,
                      header_overrides]
 
         progress_limit = 100
-        self.run_task(progress_limit, self._reduce_dark, dark_args)
+        self.run_task(progress_limit, self._reduce_dark, (reduce_params, ))
 
-    def _reduce_dark(self, bias_path: Path, dark_files: Sequence[Path], flat_path: Path,
-                     pgm_files: Union[Path, Sequence[Path]],
-                     calib_file: Path, output_path: Path, cfg_name: str, header_overrides: Dict[str, str]):
-        if flat_path:
-            budget_step = 20
-        else:
-            budget_step = 25
+    def _reduce_dark(self, params: ReduceParams):
+        num_steps = 5
+        if not params.dark_files:
+            # No dark correction
+            num_steps -= 1
+        if not params.pgm_files or params.limits:
+            # No rotation
+            num_steps -= 1
+        if not params.flat_path:
+            # No flat correction
+            num_steps -= 1
+        budget_step = int(100.0 / num_steps)
         progress = 0
 
-        if isinstance(pgm_files, Path):
-            pgm_files = (pgm_files, )
-
-        self.send_progress(0, 'Applying dark correction.')
-        dark = Dark(bias_path, dark_files)
-        if self.cancel_flag.is_set():
-            return
-        # Create temporary directory under the output dir.
-        dark_output = Path(tempfile.mkdtemp(dir=output_path))
-        file_list = list(pgm_files)
-        file_list.append(calib_file)
-        if flat_path:
-            file_list.append(flat_path)
-        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress)
-        if self.cancel_flag.is_set():
-            util.remove_dir_recursively(dark_output)
-            return
-        progress += budget_step
-
-        rotate_output = Path(tempfile.mkdtemp(dir=output_path))
-        dark_corrected = [dark_output / f.name for f in file_list]
-        self.send_progress(progress, 'Rotating files.')
-        rot = Rotate(file_list[0])
-        if self.cancel_flag.is_set():
-            util.remove_dir_recursively(dark_output)
-            return
-        rot.rotate(dark_corrected, rotate_output, self.send_progress, budget=budget_step - 1, start_with=progress)
-        util.remove_dir_recursively(dark_output)
-        if self.cancel_flag.is_set():
-            util.remove_dir_recursively(rotate_output)
-            return
-        progress += budget_step
-
-        if flat_path:
-            slant_input = Path(tempfile.mkdtemp(dir=output_path))
-            flat_path = rotate_output / flat_path.name
-            flat_input = [rotate_output / x.name for x in pgm_files]
-            flat_input.append(rotate_output / calib_file.name)
-            self.send_progress(progress, 'Applying flat correction.')
-            flat.auto_flat(flat_path, flat_input, slant_input)
-            util.remove_dir_recursively(rotate_output)
+        if params.dark_files:
+            self.send_progress(0, 'Applying dark correction.')
+            output = self._apply_dark_correction(params, budget_step, progress)
             if self.cancel_flag.is_set():
-                util.remove_dir_recursively(slant_input)
+                if output:
+                    util.remove_dir_recursively(output)
                 return
             progress += budget_step
         else:
-            slant_input = rotate_output
+            output = None
+
+        if params.pgm_files and not params.limits:
+            self.send_progress(progress, 'Rotating files.')
+            previous_output = output
+            output = self._rotate_images(params, previous_output, budget_step, progress)
+            if previous_output:
+                util.remove_dir_recursively(previous_output)
+            if self.cancel_flag.is_set():
+                if output:
+                    util.remove_dir_recursively(output)
+                return
+            progress += budget_step
+
+        if params.flat_path:
+            self.send_progress(progress, 'Applying flat correction.')
+            previous_output = output
+            output = self._apply_flat_correction(params, previous_output)
+            if previous_output:
+                util.remove_dir_recursively(previous_output)
+            if self.cancel_flag.is_set():
+                if output:
+                    util.remove_dir_recursively(output)
+                return
+            progress += budget_step
 
         self.send_progress(progress, 'Applying slant correction...')
-        calib_file = slant_input / calib_file.name
-        slt = Slant(calib_file)
-        slant_output = Path(tempfile.mkdtemp(dir=output_path))
-        slt_input_files = [calib_file]
-        slt_input_files.extend([slant_input / x.name for x in pgm_files])
-        slt.apply(slt_input_files, slant_output)
-        util.remove_dir_recursively(slant_input)
+        previous_output = output
+        output = self._apply_slant_correction(params, previous_output)
+        if previous_output:
+            util.remove_dir_recursively(previous_output)
         if self.cancel_flag.is_set():
-            util.remove_dir_recursively(slant_output)
+            if output:
+                util.remove_dir_recursively(output)
             return
         progress += budget_step
 
-        ex_o_input = [slant_output / f.name for f in pgm_files]
-        d_lo, d_hi = ex_optimal(ex_o_input, cfg_name, output_path, callback=self.send_progress,
-                                header_overrides=header_overrides, budget=budget_step - 1, start_with=progress)
-        if not self.cancel_flag.is_set():
-            calib_slt_corrected = slant_output / calib_file.name
-            ex_simple(calib_slt_corrected, (d_lo, d_hi), output_path)
-            simple_path = output_path / 'simple'
-            simple_path.mkdir(exist_ok=True)
-            ex_simple(ex_o_input, (d_lo, d_hi), simple_path)
-        util.remove_dir_recursively(slant_output)
+        self._extract_spectra(params, output, budget_step, progress)
+        if output:
+            util.remove_dir_recursively(output)
         if not self.cancel_flag.is_set():
             self.send_progress(100, 'Data reduction complete.')
+
+    def _apply_dark_correction(self, params: ReduceParams, budget_step: int, progress: int) -> Union[None, Path]:
+        dark = Dark(params.bias_path, params.dark_files)
+        if self.cancel_flag.is_set():
+            return None
+        # Create temporary directory under the output dir.
+        dark_output = Path(tempfile.mkdtemp(dir=params.output_path))
+        file_list = list()
+        if params.pgm_files:
+            file_list.extend(params.pgm_files)
+        file_list.append(params.calib_file)
+        if params.flat_path:
+            file_list.append(params.flat_path)
+        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress)
+
+    def _rotate_images(self, params: ReduceParams, input_dir: Union[None, Path],
+                       budget_step: int, progress: int) -> Union[None, Path]:
+        rotate_output = Path(tempfile.mkdtemp(dir=params.output_path))
+        file_list = list()
+        if input_dir:
+            file_list.extend([input_dir / f.name for f in params.pgm_files])
+            file_list.append(input_dir / params.calib_file.name)
+            if params.flat_path:
+                file_list.append(input_dir / params.flat_path.name)
+        else:
+            file_list.extend(params.pgm_files)
+            file_list.append(params.calib_file)
+            if params.flat_path:
+                file_list.append(params.flat_path)
+
+        rot = Rotate(file_list[0])
+        if self.cancel_flag.is_set():
+            return rotate_output
+        rot.rotate(file_list, rotate_output, self.send_progress, budget=budget_step - 1, start_with=progress)
+        return rotate_output
+
+    @staticmethod
+    def _apply_flat_correction(params: ReduceParams, input_dir: Union[None, Path]) -> Union[None, Path]:
+        output = Path(tempfile.mkdtemp(dir=params.output_path))
+        if input_dir:
+            flat_path = input_dir / params.flat_path.name
+            flat_input = list()
+            if params.pgm_files:
+                flat_input.extend([input_dir / x.name for x in params.pgm_files])
+            flat_input.append(input_dir / params.calib_file.name)
+        else:
+            flat_path = params.flat_path
+            flat_input = list()
+            if params.pgm_files:
+                flat_input.extend(params.pgm_files)
+            flat_input.append(params.calib_file)
+        flat.auto_flat(flat_path, flat_input, output)
+        return output
+
+    def _apply_slant_correction(self, params: ReduceParams, input_dir: Union[None, Path]) -> Union[None, Path]:
+        if input_dir:
+            calib_file = input_dir / params.calib_file.name
+            slt_input_files = [calib_file]
+            if params.pgm_files:
+                slt_input_files.extend([input_dir / f.name for f in params.pgm_files])
+        else:
+            calib_file = params.calib_file
+            slt_input_files = [calib_file]
+            if params.pgm_files:
+                slt_input_files.extend(params.pgm_files)
+        slt = Slant(calib_file)
+        if self.cancel_flag.is_set():
+            return None
+        slant_output = Path(tempfile.mkdtemp(dir=params.output_path))
+        slt.apply(slt_input_files, slant_output)
+        return slant_output
+
+    def _extract_spectra(self, params: ReduceParams, input_dir: Union[None, Path],
+                         budget_step: int, progress: int):
+        if params.pgm_files:
+            if input_dir:
+                pgm_files = [input_dir / f.name for f in params.pgm_files]
+            else:
+                pgm_files = params.pgm_files
+        else:
+            pgm_files = None
+        if input_dir:
+            calib_file = input_dir / params.calib_file.name
+        else:
+            calib_file = params.calib_file
+
+        if params.pgm_files and not params.limits:
+            d_lo, d_hi = ex_optimal(pgm_files, params.cam_cfg_name, params.output_path,
+                                    callback=self.send_progress,
+                                    header_overrides=params.header_overrides,
+                                    budget=budget_step - 1, start_with=progress)
+            if not self.cancel_flag.is_set():
+                ex_simple(calib_file, (d_lo, d_hi), params.output_path)
+        else:
+            if pgm_files:
+                ex_simple(pgm_files, params.limits, params.output_path)
+            ex_simple(calib_file, params.limits, params.output_path)
 
 
 if __name__ == '__main__':
