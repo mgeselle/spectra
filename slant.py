@@ -4,6 +4,7 @@ from typing import Union, SupportsInt, SupportsFloat, Iterable, Any
 
 import numpy as np
 import numpy.typing as npt
+import wx
 from astropy.io import fits
 from numpy.polynomial import Polynomial
 from scipy.signal import find_peaks
@@ -57,7 +58,7 @@ class Slant:
                 x_cent = x_cent + 10
         if peak_x[y_cent] == -1.0:
             self._fit = None
-            print('Slant: No peak found in calibration image.')
+            wx.LogMessage('Slant: No peak found in calibration image.')
             return
         y_hi = y_cent
         for y in range(y_cent + 1, data.shape[0]):
@@ -74,17 +75,20 @@ class Slant:
                 break
             y_lo = y
         if y_hi - y_lo < 4:
-            print('Too few point for slant fit.')
+            wx.LogMessage('Too few point for slant fit.')
             self._fit = None
             return
+        wx.LogMessage(f'y range for slant fit: {y_lo}..{y_hi} of {data.shape[0]}.')
         peak_x = peak_x - peak_x[y_cent]
         peak_x = peak_x[y_lo:y_hi + 1]
         peak_y = np.arange(y_lo, y_hi + 1)
         self._fit = Polynomial.fit(peak_y, peak_x, deg=2)
+        wx.LogMessage(f'Fitted polynom {self._fit} for slant correction.')
         # noinspection PyCallingNonCallable
         x_off_0 = self._fit(0)
         # noinspection PyCallingNonCallable
         x_off_1 = self._fit(data.shape[0] - 1)
+        wx.LogMessage(f'Fitted offsets at boundaries are {x_off_0:.0f}, {x_off_1:.0f}')
         if x_off_0 > x_off_1:
             self._x_0 = int(-floor(x_off_1))
             self._dim_x = data.shape[1] - self._x_0 - int(ceil(x_off_0))

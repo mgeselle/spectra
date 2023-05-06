@@ -1,3 +1,4 @@
+import wx
 from astropy.io import fits
 import functools
 from math import asin, sqrt, degrees
@@ -40,6 +41,7 @@ class Rotate:
             self._angle = 0.0
         else:
             self._angle = degrees(asin((peak_hi - peak_low) / sqrt((x_hi - x_low)**2 + (peak_hi - peak_low)**2)))
+        wx.LogMessage(f'Trace positions: {peak_low}@{x_low}, {peak_hi}@{x_hi}, angle {self._angle:.2f}')
 
     def rotate(self, input_files: Iterable[Path], output_dir: Path,
                callback: Union[Callable[[int, str], bool], None] = None,

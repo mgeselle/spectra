@@ -1,5 +1,6 @@
 import numpy as np
 import numpy.typing as npt
+import wx
 
 from astropy.io import fits
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ def apply(param: FlatParam, input_files: Union[Path, Sequence[Path]], output_pat
         in_hdu_l = fits.open(input_file)
         header = in_hdu_l[0].header
         data = in_hdu_l[0].data
-        if param.x_lo == 0 == param.x_hi == 0 and param.y_lo == param.y_hi:
+        if param.x_lo == 0 and param.x_hi == 0 and param.y_lo == param.y_hi:
             out_data = data
         else:
             out_data = data[param.y_lo:param.y_hi, param.x_lo:param.x_hi]
@@ -66,8 +67,10 @@ def _compute_flat(flat_path: Path) -> FlatParam:
     x_lo, x_hi = _find_shortest_black(data[0, :])
     y_lo, y_hi = _find_shortest_black(data[:, 0])
     if x_lo == 0 and x_hi == 0 and y_lo == 0 and y_hi == 0:
+        wx.LogMessage('Using full data for flat correction.')
         cropped_data = data
     else:
+        wx.LogMessage(f'Cropping data to ({x_lo},{y_lo}), ({x_hi},{y_hi}) for flat correction.')
         cropped_data = data[y_lo:y_hi, x_lo:x_hi]
     flat_hdu_l.close()
 

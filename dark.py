@@ -3,6 +3,7 @@ from typing import Any, Union, Callable, Iterable, Sequence
 
 import numpy as np
 import numpy.typing as npt
+import wx
 from astropy.io import fits
 
 
@@ -38,8 +39,10 @@ class Dark:
                 continue
             exp_time = float(header['EXPTIME'])
             if exp_time in self._darks_by_exposure:
+                wx.LogMessage(f'Dark-correcting {in_file.name} using direct method.')
                 corrected_data = self._correct_direct(in_hdu_l[0].data, exp_time)
             else:
+                wx.LogMessage(f'Dark-correcting {in_file.name} using scaled method.')
                 corrected_data = self._correct_scaled(in_hdu_l[0].data, exp_time)
             corrected_data[corrected_data < 0] = 0
             out_file = output_path / in_file.name
@@ -61,6 +64,7 @@ class Dark:
 
     def _correct_scaled(self, in_data: npt.NDArray[Any], exp_time: float) -> npt.NDArray[Any]:
         if self._bias is None:
+            wx.LogMessage('Cannot apply scaled dark correction: no bias file.')
             return in_data
         with fits.open(self._bias) as bias_hdu_l:
             bias_data = np.asarray(bias_hdu_l[0].data, dtype=np.float64)
@@ -70,9 +74,11 @@ class Dark:
                 dark_data = np.asarray(dark_hdu_l[0].data, dtype=np.float64) - bias_data
                 dark_header = dark_hdu_l[0].header
             scale = exp_time / float(dark_header['EXPTIME'])
+            wx.LogMessage(f'Applying dark correction with scale {scale:.3f}.')
             dark_data = dark_data * scale
             result = np.asarray(in_data, dtype=np.float64) - dark_data - bias_data
         else:
+            wx.LogMessage(f'No suitable dark file found for exposure time {exp_time:.4f}. Subtracting bias only.')
             result = np.asarray(in_data, dtype=np.float64) - bias_data
         return result
 
