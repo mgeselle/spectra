@@ -13,6 +13,10 @@ from typing import Union, Any, Iterable, Callable
 def _find_peak(column: npt.NDArray[Any], sigma: float):
     min_dist = int(column.shape[0] / 10)
     peaks, _ = find_peaks(column, prominence=2 * sigma, width=4)
+    # For very narrow star traces the first attempt might not find any peaks.
+    # Retry with half the minimum width.
+    if len(peaks) == 0:
+        peaks, _ = find_peaks(column, prominence=2 * sigma, width=2)
     peak_idx = None
     max_peak = None
     for index in peaks:
