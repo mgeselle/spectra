@@ -3,8 +3,16 @@ from typing import Any, Union, Callable, Iterable, Sequence
 
 import numpy as np
 import numpy.typing as npt
+import skimage.util as sku
 import wx
 from astropy.io import fits
+
+
+def _median_decimate(in_data: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    x_dim = int(in_data.shape[1] / 3.0)
+    y_dim = int(in_data.shape[0] / 3.0)
+    block_view = sku.view_as_blocks(in_data[0:y_dim * 3, 0:x_dim * 3], (3, 3))
+    return np.median(block_view, axis=[2,3])
 
 
 class Dark:
@@ -22,7 +30,7 @@ class Dark:
     def correct(self, input_files: Iterable[Path],
                 output_path: Path,
                 callback: Union[Callable[[int, str], bool], None] = None,
-                budget: int = 0, start_with=0):
+                budget: int = 0, start_with=0, decimate: bool = False):
         index = start_with
         input_list = list(input_files)
         step = int(budget / len(input_list))
@@ -45,6 +53,8 @@ class Dark:
                 wx.LogMessage(f'Dark-correcting {in_file.name} using scaled method.')
                 corrected_data = self._correct_scaled(in_hdu_l[0].data, exp_time)
             corrected_data[corrected_data < 0] = 0
+            if decimate:
+                corrected_data = _median_decimate(corrected_data)
             out_file = output_path / in_file.name
             new_hdu = fits.PrimaryHDU(corrected_data, header)
             new_hdu.writeto(out_file, overwrite=True)
@@ -98,3 +108,4 @@ class Dark:
         if last_cand_time is None:
             return None
         return self._darks_by_exposure[last_cand_time]
+

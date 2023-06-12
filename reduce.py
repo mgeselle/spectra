@@ -30,6 +30,8 @@ class ReduceParams:
     dark_files: Union[None , Sequence[Path]] = None
     flat_path: Union[None , Path] = None
     pgm_files: Union[None , Path , Sequence[Path]] = None
+    decimate: bool = False,
+    run_to_phase: str = 'EXTRACT'
 
 
 class Reduce(TaskDialog):
@@ -96,10 +98,18 @@ class Reduce(TaskDialog):
         wxutil.size_text_by_chars(self._y_lo_text, 5)
         self._y_hi_text = wxli.IntCtrl(self, min=0, allow_none=True, value=None)
         wxutil.size_text_by_chars(self._y_hi_text, 5)
+        self._decimate_cb = wx.CheckBox(self, wx.ID_ANY, 'Decimate 3x3')
         limits_sizer = wx.BoxSizer(wx.HORIZONTAL)
         limits_sizer.Add(self._y_lo_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
         limits_sizer.AddSpacer(10)
         limits_sizer.Add(self._y_hi_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        limits_sizer.AddSpacer(30)
+        limits_sizer.Add(self._decimate_cb, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+
+        run_to_label = wx.StaticText(self, wx.ID_ANY, 'Run to phase:')
+        self._run_to_combo = wx.ComboBox(self, value='EXTRACT', choices=['DARK', 'ROTATE', 'FLAT', 'SLANT', 'EXTRACT'],
+                                         style=wx.CB_DROPDOWN | wx.CB_READONLY)
+        wxutil.size_text_by_chars(self._run_to_combo, 9)
 
         eq_cfg_label = wx.StaticText(self, wx.ID_ANY, 'Equipment Configuration:')
         config_values = ['']
@@ -120,7 +130,7 @@ class Reduce(TaskDialog):
         wxutil.size_text_by_chars(self._obj_entry, text_chars)
 
         vbox = wx.BoxSizer(wx.VERTICAL)
-        grid = wx.FlexGridSizer(rows=12, cols=2, hgap=5, vgap=5)
+        grid = wx.FlexGridSizer(rows=13, cols=2, hgap=5, vgap=5)
         grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(in_dir_sizer, 1, wx.ALIGN_LEFT)
         grid.Add(master_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -139,6 +149,8 @@ class Reduce(TaskDialog):
         grid.Add(self._pgm_text, 1, wx.ALIGN_LEFT)
         grid.Add(limits_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(limits_sizer, 1, wx.ALIGN_LEFT)
+        grid.Add(run_to_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._run_to_combo, 1, wx.ALIGN_LEFT)
         grid.Add(eq_cfg_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._eq_cfg_combo, 1, wx.ALIGN_LEFT)
         grid.Add(loc_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -272,10 +284,9 @@ class Reduce(TaskDialog):
                                      bias_path=bias_path,
                                      dark_files=dark_files,
                                      flat_path=flat_file,
-                                     pgm_files=pgm_files)
-
-        dark_args = [bias_path, dark_files, flat_file, pgm_files, calib_path, output_path, cam_cfg_name,
-                     header_overrides]
+                                     pgm_files=pgm_files,
+                                     decimate=self._decimate_cb.GetValue(),
+                                     run_to_phase=self._run_to_combo.GetValue())
 
         progress_limit = 100
         self.run_task(progress_limit, self._reduce_dark, (reduce_params, ))
@@ -305,7 +316,7 @@ class Reduce(TaskDialog):
         else:
             output = None
 
-        if params.pgm_files and not params.limits:
+        if params.pgm_files and not params.limits and params.run_to_phase != 'DARK':
             self.send_progress(progress, 'Rotating files.')
             previous_output = output
             output = self._rotate_images(params, previous_output, budget_step, progress)
@@ -317,7 +328,7 @@ class Reduce(TaskDialog):
                 return
             progress += budget_step
 
-        if params.flat_path:
+        if params.flat_path and params.run_to_phase not in ['DARK', 'ROTATE']:
             self.send_progress(progress, 'Applying flat correction.')
             previous_output = output
             output = self._apply_flat_correction(params, previous_output)
@@ -329,20 +340,22 @@ class Reduce(TaskDialog):
                 return
             progress += budget_step
 
-        self.send_progress(progress, 'Applying slant correction...')
-        previous_output = output
-        output = self._apply_slant_correction(params, previous_output)
-        if previous_output:
-            util.remove_dir_recursively(previous_output)
-        if self.cancel_flag.is_set():
-            if output:
-                util.remove_dir_recursively(output)
-            return
-        progress += budget_step
+        if params.run_to_phase not in ['DARK', 'ROTATE', 'FLAT']:
+            self.send_progress(progress, 'Applying slant correction...')
+            previous_output = output
+            output = self._apply_slant_correction(params, previous_output)
+            if previous_output:
+                util.remove_dir_recursively(previous_output)
+            if self.cancel_flag.is_set():
+                if output:
+                    util.remove_dir_recursively(output)
+                return
+            progress += budget_step
 
-        self._extract_spectra(params, output, budget_step, progress)
-        if output:
-            util.remove_dir_recursively(output)
+            if params.run_to_phase != 'SLANT':
+                self._extract_spectra(params, output, budget_step, progress)
+                if output:
+                    util.remove_dir_recursively(output)
         if not self.cancel_flag.is_set():
             self.send_progress(100, 'Data reduction complete.')
 
@@ -350,19 +363,27 @@ class Reduce(TaskDialog):
         dark = Dark(params.bias_path, params.dark_files)
         if self.cancel_flag.is_set():
             return None
-        # Create temporary directory under the output dir.
-        dark_output = Path(tempfile.mkdtemp(dir=params.output_path))
+        if params.run_to_phase == 'DARK':
+            dark_output = params.output_path
+        else:
+            # Create temporary directory under the output dir.
+            dark_output = Path(tempfile.mkdtemp(dir=params.output_path))
         file_list = list()
         if params.pgm_files:
             file_list.extend(params.pgm_files)
         file_list.append(params.calib_file)
         if params.flat_path:
             file_list.append(params.flat_path)
-        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress)
+        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress,
+                     decimate=params.decimate)
+        return dark_output
 
     def _rotate_images(self, params: ReduceParams, input_dir: Union[None, Path],
                        budget_step: int, progress: int) -> Union[None, Path]:
-        rotate_output = Path(tempfile.mkdtemp(dir=params.output_path))
+        if params.run_to_phase == 'ROTATE':
+            rotate_output = params.output_path
+        else:
+            rotate_output = Path(tempfile.mkdtemp(dir=params.output_path))
         file_list = list()
         if input_dir:
             file_list.extend([input_dir / f.name for f in params.pgm_files])
@@ -383,7 +404,10 @@ class Reduce(TaskDialog):
 
     @staticmethod
     def _apply_flat_correction(params: ReduceParams, input_dir: Union[None, Path]) -> Union[None, Path]:
-        output = Path(tempfile.mkdtemp(dir=params.output_path))
+        if params.run_to_phase == 'FLAT':
+            output = params.output_path
+        else:
+            output = Path(tempfile.mkdtemp(dir=params.output_path))
         if input_dir:
             flat_path = input_dir / params.flat_path.name
             flat_input = list()
@@ -413,7 +437,10 @@ class Reduce(TaskDialog):
         slt = Slant(calib_file)
         if self.cancel_flag.is_set():
             return None
-        slant_output = Path(tempfile.mkdtemp(dir=params.output_path))
+        if params.run_to_phase == 'SLANT':
+            slant_output = params.output_path
+        else:
+            slant_output = Path(tempfile.mkdtemp(dir=params.output_path))
         slt.apply(slt_input_files, slant_output)
         return slant_output
 
