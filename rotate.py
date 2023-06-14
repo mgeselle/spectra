@@ -71,6 +71,17 @@ class Rotate:
             data_new = data
         else:
             data_new = rotate(data, self._angle, reshape=False)
+            min_y = 0
+            while min_y < data_new.shape[0] / 4 and data_new[min_y, 0] == 0.0:
+                min_y += 1
+            max_y = data_new.shape[0] - 1
+            while max_y > 3 * data_new.shape[0] / 4 and data_new[max_y, 0] == 0.0:
+                max_y -= 1
+            if min_y > 0:
+                data_new = data_new[min_y:data_new.shape[0] - 1 - min_y, :]
+            elif max_y < data_new.shape[0] - 1:
+                data_new = data_new[data_new.shape[0] - 1 - max_y:max_y, :]
+
         hdu_new = fits.PrimaryHDU(data_new, header)
         output_file = output_path / input_file.name
         hdu_new.writeto(output_file, overwrite=True)
