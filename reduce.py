@@ -304,6 +304,8 @@ class Reduce(TaskDialog):
         if not params.flat_path:
             # No flat correction
             num_steps -= 1
+        if params.decimate:
+            num_steps += 1
         budget_step = int(100.0 / num_steps)
         progress = 0
 
