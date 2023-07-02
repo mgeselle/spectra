@@ -11,12 +11,7 @@ from scipy.signal import find_peaks
 
 
 def _find_next_peak(x_ref: Union[SupportsInt, SupportsFloat], x_data: npt.NDArray[Any]):
-    quantile = np.quantile(x_data, 0.2)
-    mult = 5
-    peaks = []
-    while mult > 1 and len(peaks) == 0:
-        peaks, _ = find_peaks(x_data, prominence=quantile * mult, width=2)
-        mult -= 1
+    peaks, _ = find_peaks(x_data, prominence=2000)
     result = None
     last_delta = None
     for x in peaks:
