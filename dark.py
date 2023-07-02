@@ -30,7 +30,7 @@ class Dark:
     def correct(self, input_files: Iterable[Path],
                 output_path: Path,
                 callback: Union[Callable[[int, str], bool], None] = None,
-                budget: int = 0, start_with=0, decimate: bool = False):
+                budget: int = 0, start_with=0):
         index = start_with
         input_list = list(input_files)
         step = int(budget / len(input_list))
@@ -53,8 +53,6 @@ class Dark:
                 wx.LogMessage(f'Dark-correcting {in_file.name} using scaled method.')
                 corrected_data = self._correct_scaled(in_hdu_l[0].data, exp_time)
             corrected_data[corrected_data < 0] = 0
-            if decimate:
-                corrected_data = _median_decimate(corrected_data)
             out_file = output_path / in_file.name
             new_hdu = fits.PrimaryHDU(corrected_data, header)
             new_hdu.writeto(out_file, overwrite=True)

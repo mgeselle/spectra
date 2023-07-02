@@ -7,6 +7,7 @@ import wx
 import flat
 from config import Config
 from dark import Dark
+from decimate import decimate
 from extract import optimal as ex_optimal
 from extract import simple as ex_simple
 from taskdialog import TaskDialog
@@ -107,7 +108,8 @@ class Reduce(TaskDialog):
         limits_sizer.Add(self._decimate_cb, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
         run_to_label = wx.StaticText(self, wx.ID_ANY, 'Run to phase:')
-        self._run_to_combo = wx.ComboBox(self, value='EXTRACT', choices=['DARK', 'ROTATE', 'FLAT', 'SLANT', 'EXTRACT'],
+        self._run_to_combo = wx.ComboBox(self, value='EXTRACT',
+                                         choices=['DARK', 'ROTATE', 'FLAT', 'SLANT', 'EXTRACT'],
                                          style=wx.CB_DROPDOWN | wx.CB_READONLY)
         wxutil.size_text_by_chars(self._run_to_combo, 9)
 
@@ -328,6 +330,17 @@ class Reduce(TaskDialog):
                 return
             progress += budget_step
 
+        if params.decimate:
+            previous_output = output
+            output = self._apply_decimation(params, previous_output, budget_step, progress)
+            if previous_output:
+                util.remove_dir_recursively(previous_output)
+            if self.cancel_flag.is_set():
+                if output:
+                    util.remove_dir_recursively(output)
+                return
+            progress += budget_step
+
         if params.flat_path and params.run_to_phase not in ['DARK', 'ROTATE']:
             self.send_progress(progress, 'Applying flat correction.')
             previous_output = output
@@ -363,7 +376,7 @@ class Reduce(TaskDialog):
         dark = Dark(params.bias_path, params.dark_files)
         if self.cancel_flag.is_set():
             return None
-        if params.run_to_phase == 'DARK':
+        if params.run_to_phase == 'DARK' and not params.decimate:
             dark_output = params.output_path
         else:
             # Create temporary directory under the output dir.
@@ -374,13 +387,12 @@ class Reduce(TaskDialog):
         file_list.append(params.calib_file)
         if params.flat_path:
             file_list.append(params.flat_path)
-        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress,
-                     decimate=params.decimate)
+        dark.correct(file_list, dark_output, self.send_progress, budget=budget_step - 1, start_with=progress)
         return dark_output
 
     def _rotate_images(self, params: ReduceParams, input_dir: Union[None, Path],
                        budget_step: int, progress: int) -> Union[None, Path]:
-        if params.run_to_phase == 'ROTATE':
+        if params.run_to_phase == 'ROTATE' and not params.decimate:
             rotate_output = params.output_path
         else:
             rotate_output = Path(tempfile.mkdtemp(dir=params.output_path))
@@ -443,6 +455,21 @@ class Reduce(TaskDialog):
             slant_output = Path(tempfile.mkdtemp(dir=params.output_path))
         slt.apply(slt_input_files, slant_output)
         return slant_output
+
+    def _apply_decimation(self, params: ReduceParams, input_dir: Path, budget: int, progress: int):
+        input_files = []
+        if params.flat_path:
+            input_files.append(input_dir / params.flat_path.name)
+        if params.calib_file:
+            input_files.append(input_dir / params.calib_file.name)
+        if params.pgm_files:
+            input_files.extend([input_dir / f.name for f in params.pgm_files])
+        if params.run_to_phase not in ['FLAT', 'SLANT', 'EXTRACT']:
+            output_dir = params.output_path
+        else:
+            output_dir = Path(tempfile.mkdtemp(dir=params.output_path))
+        decimate(input_files, output_dir, self.send_progress, budget, progress)
+        return output_dir
 
     def _extract_spectra(self, params: ReduceParams, input_dir: Union[None, Path],
                          budget_step: int, progress: int):
