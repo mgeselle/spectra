@@ -41,7 +41,7 @@ class Config:
 
     def __init__(self):
         self._lock = Lock()
-        self._config: wx.ConfigBase = wx.ConfigBase.Get()
+        self._config: wx.ConfigBase = wx.Config('Spectra')
 
     def get_camera_configs(self) -> List[str]:
         return self._get_config_names('/Camera')

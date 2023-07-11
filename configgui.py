@@ -19,7 +19,8 @@ class CamCfgGUI(wx.Dialog):
         wxutil.size_text_by_chars(self._cam_combo, 30)
 
         ron_label = wx.StaticText(self, wx.ID_ANY, 'Read-Out Noise [e-]:')
-        self._ron_entry = wx.TextCtrl(self, id=wx.ID_ANY, validator=validator.DecimalValidator())
+        self._ron_validator = validator.DecimalValidator()
+        self._ron_entry = wx.TextCtrl(self, id=wx.ID_ANY, validator=self._ron_validator)
         wxutil.size_text_by_chars(self._ron_entry, 5)
 
         gain_label = wx.StaticText(self, wx.ID_ANY, 'Gain [e-/ADU]:')
@@ -73,7 +74,7 @@ class CamCfgGUI(wx.Dialog):
         self._ron_entry.SetValue(str(cam_cfg.ron))
 
     def _save(self, event: wx.CommandEvent):
-        if not self.Validate():
+        if not (self._ron_entry.Validate() and self._gain_entry.Validate()):
             return
         entry = self._cam_combo.GetValue()
         if entry == '':

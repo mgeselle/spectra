@@ -27,6 +27,9 @@ class DecimalValidator(wx.Validator):
 
         return True
 
+    def Validate(self, parent):
+        return self.TransferFromWindow()
+
     @staticmethod
     def _on_char(event: wx.KeyEvent):
         key = event.GetKeyCode()

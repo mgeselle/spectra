@@ -1,20 +1,34 @@
+from dataclasses import dataclass
+from math import sqrt, log
 from pathlib import Path
-from time import time
 from typing import Union, Tuple, Sequence, Any, Callable, Dict
 
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.ma as ma
+import numpy.polynomial as npp
 import numpy.typing as npt
+import scipy.ndimage as scn
+import scipy.optimize as sco
+import scipy.signal as scs
 import wx
 from astropy.io import fits
 from astropy.time import Time, TimeDelta
-from numpy.polynomial import Polynomial
+from astropy.visualization import mpl_normalize as apn
 
 from config import Config, CameraConfig
 
 
+@dataclass
+class ImageBounds:
+    data_low: int
+    data_high: int
+    sky_low: int
+    sky_high: int
+
+
 def simple(input_files: Union[Path, Sequence[Path]],
-           limits: Union[Tuple[int, int],  Sequence[int]],
+           limits: Union[Tuple[int, int], Sequence[int]],
            output_path: Path):
     headers = []
     if isinstance(input_files, Path):
@@ -33,7 +47,8 @@ def simple(input_files: Union[Path, Sequence[Path]],
     out_hdu.writeto(output_file, overwrite=True)
 
 
-def simple_single(input_file: Path, limits: Union[Tuple[int, int],  Sequence[int]]) -> Tuple[npt.NDArray[Any], fits.Header]:
+def simple_single(input_file: Path, limits: Union[Tuple[int, int], Sequence[int]]) -> Tuple[
+    npt.NDArray[Any], fits.Header]:
     if len(limits) != 2:
         raise ValueError('limits have wrong length')
     lower, upper = sorted(limits)
@@ -61,6 +76,7 @@ def optimal(input_files: Union[Path, Sequence[Path]],
     d_high = None
     progress = start_with
     prog_step = int(budget / len(input_files))
+    spectra = []
     for i in range(len(input_files)):
         if callback is not None:
             msg = f'Extracting spectrum from {input_files[i].name}.'
@@ -73,10 +89,10 @@ def optimal(input_files: Union[Path, Sequence[Path]],
             out_data = np.empty((len(input_files), data.shape[1]))
             d_low = data.shape[0]
             d_high = 0
-        spectrum, n_d_low, n_d_high = _optimal(data, cam_cfg, callback, prog_step, progress)
+        spectrum, n_d_low, n_d_high = _optimal(data, cam_cfg)
         in_hdu_l.close()
-        if spectrum is None:
-            return None, None
+        if spectrum is not None:
+            spectra.append(spectrum)
         out_data[i] = spectrum[:]
         if n_d_low < d_low:
             d_low = n_d_low
@@ -84,6 +100,10 @@ def optimal(input_files: Union[Path, Sequence[Path]],
             d_high = n_d_high
         progress += prog_step
 
+    if len(spectra) == 0:
+        return None, None
+
+    out_data = np.array(spectra)
     out_name = _get_common_name(input_files, 'optimal-1d')
     if out_name != 'optimal-1d':
         out_spectrum = np.mean(out_data, axis=0)
@@ -145,223 +165,231 @@ def _get_common_name(files: Sequence[Path], default_name: str) -> Union[str, Non
     return out_name + files[0].suffix
 
 
-def _optimal(data: npt.NDArray[Any], cam_cfg: CameraConfig,
-             callback: Union[None, Callable[[int, str], bool]],
-             start_with: int, budget: int) -> Union[Tuple[npt.NDArray[Any], int, int], Tuple[None, None, None]]:
-    progress = start_with
-    prog_step = int(budget / 4)
-    before = time()
-    d_low, d_high, sky_low, sky_high = _find_sky_and_signal(data)
-    progress += prog_step
-    if callback:
-        elapsed = time() - before
-        msg = f'Detected signal in {elapsed:5.3f}s. Signal: {d_low}..{d_high}, sky: 0..{sky_low}, {sky_high}..'
-        if callback(progress, msg):
-            return None, None, None
-
-    before = time()
-    var_img = np.abs(data) / cam_cfg.gain + (cam_cfg.ron / cam_cfg.gain)**2
-    if callback:
-        elapsed = (time() - before) * 1000
-        msg = f'Created initial variance image in {elapsed:7.3f}ms.'
-        if callback(progress, msg):
-            return None, None, None
-    before = time()
-    sky_img = _create_sky_image(data, sky_low, sky_high, var_img)
-    progress += prog_step
-    if callback:
-        elapsed = time() - before
-        msg = f'Created sky image in {elapsed:5.3f}s.'
-        if callback(progress, msg):
-            return None, None, None
-    net_img = data - sky_img
-    spectrum = _extract_spectrum(net_img, sky_img, var_img, d_low, d_high, cam_cfg, callback,
-                                 budget=budget - (progress - start_with), start_with=progress)
+def _optimal(data: npt.NDArray[Any], config: CameraConfig) -> Union[
+        Tuple[npt.NDArray[Any], int, int], Tuple[None, None, None]]:
+    image_bounds = _find_image_bounds(data)
+    if image_bounds is None:
+        return None, None, None
+    variance = (np.abs(data) + config.ron ** 2 / config.gain) / config.gain
+    sky = _create_sky_image(data, variance, image_bounds)
+    if sky is None:
+        return None, None, None
+    spectrum = _extract_spectrum(data, sky, variance, image_bounds, config)
     if spectrum is None:
         return None, None, None
-    return spectrum, d_low, d_high
-
-
-def _find_sky_and_signal(data: npt.NDArray[Any]) -> Tuple[int, int, int, int]:
-    mean = np.mean(data, axis=1, dtype=np.int32)
-    stddev = np.std(data, axis=1)
-    max_data = 0
-    max_idx = None
-    for i in range(0, mean.shape[0]):
-        if max_idx is None or mean[i] > max_data:
-            max_idx = i
-            max_data = mean[i]
-    d_low = None
-    factor = 1.5
-    while d_low is None:
-        for i in range(max_idx - 1, -1, -1):
-            if mean[i] < factor * stddev[i]:
-                d_low = i
-                break
-        factor = factor + 0.5
-    d_high = None
-    while d_high is None:
-        for i in range(max_idx + 1, mean.shape[0]):
-            if mean[i] < factor * stddev[i]:
-                d_high = i
-                break
-        factor = factor + 0.5
-    if d_low > 20:
-        sky_low = d_low - 10
     else:
-        sky_low = d_low - 1
-    if mean.shape[0] - d_high > 20:
-        sky_high = d_high + 10
+        return spectrum, image_bounds.data_low, image_bounds.data_high
+
+
+def _find_image_bounds(data: npt.NDArray[Any], plot: bool = False) -> Union[None, ImageBounds]:
+    x_avg = np.average(data, axis=1)
+    # plt.plot(np.arange(0, x_avg.shape[0]), x_avg)
+    # plt.show()
+    peaks, _ = scs.find_peaks(x_avg, prominence=400, width=4)
+    if len(peaks) == 0:
+        peaks, _ = scs.find_peaks(x_avg, prominence=400, width=2)
+        if len(peaks) == 0:
+            wx.LogMessage('No signal found.')
+            return None
+    if len(peaks) > 1:
+        peak = None
+        max_peak = None
+        for c_peak in peaks:
+            if max_peak is None or x_avg[c_peak] > max_peak:
+                peak = c_peak
+                max_peak = x_avg[c_peak]
     else:
-        sky_high = d_high + 1
+        peak = peaks[0]
 
-    return d_low, d_high, sky_low, sky_high
+    # Attempt to fit gaussian to first approximation peak
+    # y = a + b * exp(-0.5 * [(x - c) / d]**2)
+    a_0 = (x_avg[0] + x_avg[-1]) / 2.0
+    b_0 = x_avg[peak]
+    c_0 = peak
+    # Assuming initial FWHM of 4
+    d_0 = 2.0 / sqrt(2 * log(2))
+
+    def model(x, a, b, c, d):
+        return a + b * np.exp(-0.5 * ((x - c) / d) ** 2)
+
+    y_vals = np.arange(0, x_avg.shape[0])
+    try:
+        popt, _ = sco.curve_fit(model, y_vals, x_avg, p0=(a_0, b_0, c_0, d_0))
+    except RuntimeError as ex:
+        wx.LogMessage(f'Runtime error fitting signal peak: {ex}')
+        return None
+
+    data_low = int(popt[2] - 5 * popt[3])
+    data_high = int(popt[2] + 5 * popt[3])
+
+    sky_low = int(popt[2] - 8 * popt[3])
+    sky_high = int(popt[2] + 8 * popt[3])
+
+    if plot:
+        plt.plot([peak], [x_avg[peak]], 'ro')
+        plt.plot(y_vals, model(y_vals, *popt), 'g:')
+        plt.plot([data_low, data_high], [x_avg[data_low], x_avg[data_high]], 'rv')
+        plt.plot([sky_low, sky_high], [x_avg[sky_low], x_avg[sky_high]], 'r*')
+        plt.show()
+    return ImageBounds(data_low, data_high, sky_low, sky_high)
 
 
-def _create_sky_image(data: npt.NDArray[Any], sky_low: int, sky_high: int,
-                      var_img: npt.NDArray[Any]) -> npt.NDArray[Any]:
-    result = np.empty(data.shape, dtype=np.float64)
-    y_vals = ma.arange(data.shape[0])
-    img_vals = ma.empty(data.shape[0])
-    inv_weights = ma.empty(data.shape[0])
-    mask_low = sky_low + 1
-    mask_high = sky_high - 1
-    for x in range(data.shape[1]):
-        y_vals.mask = ma.nomask
-        y_vals[mask_low:mask_high] = ma.masked
-        img_vals.mask = ma.nomask
-        img_vals[:] = data[:, x]
-        img_vals[mask_low:mask_high] = ma.masked
-        inv_weights.mask = ma.nomask
-        inv_weights[:] = var_img[:, x]
-        inv_weights[mask_low:mask_high] = ma.masked
+def _create_sky_image(data: npt.NDArray[Any], variance: npt.NDArray[Any],
+                      bounds: Union[None, ImageBounds], plot: bool = False) -> Union[None, npt.NDArray[Any]]:
+    if bounds is None:
+        return None
+    masked_data = data.view(ma.MaskedArray)
+    masked_variance = variance.view(ma.MaskedArray)
+    weights = 1.0 / masked_variance
+    if bounds.sky_high < bounds.data_low:
+        # spectrum trace is on the upper edge of the image
+        masked_data[bounds.sky_high:, :] = ma.masked
+    elif bounds.data_high < bounds.sky_low:
+        # spectrum trace is on the lower edge of the image
+        masked_data[0:bounds.sky_low, :] = ma.masked
+    else:
+        # well-behaved image
+        masked_data[bounds.sky_low:bounds.sky_high] = ma.masked
+    weights.mask = masked_data.mask
 
-        val_rejected = True
-        while val_rejected:
-            y_fit = y_vals[~y_vals.mask]
-            img_fit = img_vals[~img_vals.mask]
-            weights = 1 / inv_weights[~inv_weights.mask]
-            poly = Polynomial.fit(y_fit, img_fit, deg=3, w=weights)
-            # noinspection PyCallingNonCallable
-            residual = (img_vals - poly(y_vals))**2 / inv_weights
-            val_rejected = False
-            rej_idx = np.nonzero(residual > 16)
+    result = np.empty(data.shape)
+    for x in range(0, data.shape[1]):
+        x_data = ma.arange(0, data.shape[0])
+        x_data.mask = masked_data.mask[:, x]
+        y_data = masked_data[:, x]
+        y_data.mask = x_data.mask
+        y_weights = weights[:, x]
+        y_weights.mask = y_data.mask
+
+        rejected = True
+        while rejected:
+            poly = npp.Polynomial.fit(x_data, y_data, deg=2, w=y_weights)
+            residual = (y_data - poly(x_data)) ** 2 * y_weights
+            rej_idx = ma.nonzero(residual > 16)
+            rejected = False
             if len(rej_idx[0]):
-                val_rejected = True
-                for y in rej_idx[0]:
-                    y_vals[y] = ma.masked
-                    img_vals[y] = ma.masked
-                    inv_weights[y] = ma.masked
+                rejected = True
+                for idx in rej_idx[0]:
+                    x_data[idx] = ma.masked
+                y_data.mask = x_data.mask
+                y_weights.mask = y_data.mask
 
-            if not val_rejected:
-                y_vals.mask = ma.nomask
-                # noinspection PyCallingNonCallable
-                result[:, x] = poly(y_vals)
+        x_data.mask = ma.nomask
+        result[:, x] = poly(x_data)
+
+    if plot:
+        p_img = result
+        norm = apn.ImageNormalize(p_img, interval=apn.PercentileInterval(95.0), stretch=apn.AsinhStretch())
+        plt.imshow(p_img, origin='lower', norm=norm)
+        plt.show()
 
     return result
 
 
-def _extract_spectrum(net_img: npt.NDArray[Any], sky_img: npt.NDArray[Any], var_img: npt.NDArray[Any],
-                      d_low: int, d_high: int, cam_cfg: CameraConfig,
-                      callback: Union[None, Callable[[int, str], bool]],
-                      budget: int, start_with: int) -> Union[npt.NDArray[Any], None]:
-    start = time()
-    prog_step = int(budget / 2)
-    if callback:
-        if callback(start_with, 'Extracting spectrum...'):
-            return None
-    n_img = ma.asarray(net_img[d_low:d_high, :])
-    f_lam = ma.sum(n_img, axis=0)
-    f_lam_sq = f_lam**2
-    v_img = ma.asarray(var_img[d_low:d_high, :])
-    s_img = ma.asarray(sky_img[d_low:d_high, :])
-    p_lam = n_img / f_lam
-    p_lam_m = p_lam.copy()
-    p_lam_m.harden_mask()
-    x_val = ma.arange(n_img.shape[1])
-    v_0 = (cam_cfg.ron / cam_cfg.gain)**2
+def _extract_spectrum(data: npt.NDArray[Any], sky: npt.NDArray[Any], init_variance: npt.NDArray[Any],
+                      bounds: ImageBounds, config: CameraConfig, plot: bool = False) -> npt.NDArray[Any]:
+    masked_data = ma.asarray(data[bounds.data_low:bounds.data_high, :])
+    for xd in range(0, masked_data.shape[1]):
+        if masked_data[0, xd] != 0:
+            break
+        masked_data[:, xd] = ma.masked
+    for xd in range(-1, -masked_data.shape[1], -1):
+        if masked_data[0, xd] != 0:
+            break
+        masked_data[:, xd] = ma.masked
+    masked_sky = ma.asarray(sky[bounds.data_low:bounds.data_high, :])
+    masked_var = ma.asarray(init_variance[bounds.data_low:bounds.data_high, :])
+    net_img = masked_data - masked_sky
+    f_raw = ma.sum(net_img, axis=0)
+    w = f_raw ** 2 / masked_var
+    # smooth continuum by median filtering
+    p_d = scn.median_filter(net_img / f_raw, size=(1, 8))
+    p_d = ma.asarray(p_d)
+    # Mask any zero values at the borders of the spectrum image:
+    # These are bound to be artifacts from rotation/slant correction
+    for y in range(0, p_d.shape[0]):
+        for xd in range(0, p_d.shape[1]):
+            if p_d[0, xd] != 0:
+                break
+            p_d[:, xd] = ma.masked
+        for xd in range(-1, -masked_data.shape[1], -1):
+            if p_d[0, xd] != 0:
+                break
+            p_d[:, xd] = ma.masked
 
-    # Iterate for profile (p_lam, p_sum)
-    pixel_rejected = True
-    while pixel_rejected:
-        weights = f_lam_sq / v_img
-        for i in range(0, n_img.shape[0]):
-            p_slice = p_lam_m[i, :]
-            w_slice = weights[i, :]
-            if p_slice.mask is ma.nomask:
-                x_val_fit = x_val
-                p_x_fit = p_slice
-                w_fit = w_slice
-            else:
-                x_val_fit = x_val[~p_slice.mask]
-                p_x_fit = p_slice[~p_slice.mask]
-                w_fit = w_slice[~p_slice.mask]
-            poly = Polynomial.fit(x_val_fit, p_x_fit, deg=5, w=w_fit)
-            # noinspection PyCallingNonCallable
-            p_lam[i, :] = poly(x_val)
+    p_r = ma.empty(p_d.shape)
+    x = ma.arange(0, masked_data.shape[1])
 
-        p_lam[p_lam < 0] = 0
-        np.copyto(p_lam_m, p_lam)
-        p_sum = ma.sum(p_lam_m, axis=0)
-        pixel_rejected = False
+    rejected = True
+    while rejected:
+        for y in range(0, masked_data.shape[0]):
+            # tck = interpolate.splrep(x, p_d[y, :], w=w[y, :], k=4, s=p_d.shape[1])
+            # p_r[y, :] = interpolate.splev(x, tck, der=0)
+            # poly = npp.Chebyshev.fit(x, p_d[y, :], deg=5, w=w[y, :])
+            # p_r[y, :] = poly(x)
+            poly = npp.Polynomial.fit(x, p_d[y, :], deg=15, w=w[y, :])
+            p_r[y, :] = poly(x)
+        p_r[p_r < 0] = 0
+        p_r = p_r / ma.sum(p_r, axis=0)
+        f = ma.sum(p_r * net_img / masked_var, axis=0) / ma.sum(p_r ** 2 / masked_var, axis=0)
+        f_by_p = f * p_r
+        masked_var = (ma.abs(f_by_p + masked_sky) + config.ron ** 2 / config.gain) / config.gain
+        residual = (net_img - f_by_p) ** 2 / masked_var
+        residual.mask = p_d.mask
+        rej_idx = np.nonzero(residual > 16)
+        wx.LogMessage(f'stage 1 len rej_idx = {len(rej_idx[0])}')
+        rejected = len(rej_idx[0]) > 0
+        if rejected:
+            for y_r, x_r in zip(rej_idx[0], rej_idx[1]):
+                p_d[y_r, x_r] = ma.masked
+        w = f ** 2 / masked_var
+    p_d.mask = ma.nomask
 
-        f_by_p = p_lam_m * f_lam / p_sum
-        v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
-        residual = (n_img - f_by_p)**2 / v_img
-        rej_idx = ma.nonzero(residual > 16)
-        if len(rej_idx[0]) > 0:
-            pixel_rejected = True
-            for y, x in zip(rej_idx[0], rej_idx[1]):
-                p_lam_m[y, x] = ma.masked
-    if callback:
-        elapsed = time() - start
-        if callback(start_with + prog_step, f'Computed profile in {elapsed:5.3f}s.'):
-            return None
+    if plot:
+        for y in range(0, net_img.shape[0]):
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1)
+            ax1.plot(x, net_img[y])
+            ax2.plot(x, p_d[y], 'ro')
+            ax2.plot(x, p_r[y])
+            ax3.plot(x, (net_img[y] - f_by_p[y]) ** 2 / masked_var[y])
+            plt.show()
+    else:
+        wx.LogMessage('Extracted raw spectrum.')
 
-    # Reject cosmic ray hits
-    start = time()
-    pixel_rejected = True
-    variance = None
+    residual.mask = ma.nomask
+    rej_idx = None
+    limit = 25
+    rej_cutoff = 100
+    while rej_idx is None or len(rej_idx[0] > rej_cutoff):
+        rej_idx = np.nonzero(residual > limit)
+        if len(rej_idx[0] > rej_cutoff):
+            limit += 10
+    wx.LogMessage(f'For cosmic rays rejecting residuals >= {limit}')
+    while True:
+        rej_idx = np.nonzero(residual > limit)
+        if len(rej_idx[0]) == 0:
+            break
+        wx.LogMessage(f'len rej_idx = {len(rej_idx[0])}')
+        max_res = 0
+        for y_r, x_r in zip(rej_idx[0], rej_idx[1]):
+            if residual[y_r, x_r] > max_res:
+                max_res = residual[y_r, x_r]
+                y_max = y_r
+                x_max = x_r
+        p_r[y_max, x_max] = ma.masked
+        p_r = p_r / ma.sum(p_r, axis=0)
+        f = ma.sum(p_r * net_img / masked_var, axis=0) / ma.sum(p_r ** 2 / masked_var, axis=0)
+        f_by_p = f * p_r
+        masked_var = (ma.abs(f_by_p + masked_sky) + config.ron ** 2 / config.gain) / config.gain
+        residual = (net_img - f_by_p) ** 2 / masked_var
+        residual.mask = p_r.mask
 
-    p_sum = ma.sum(p_lam, axis=0)
-    p_lam_norm = p_lam / p_sum
-    p_lam_norm.harden_mask()
-    f_by_p = p_lam_norm * f_lam
-    v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
-    while pixel_rejected:
-        enumerator = ma.sum((p_lam_norm * n_img) / v_img, axis=0)
-        variance = ma.sum(p_lam_norm**2 / v_img, axis=0)
-        f_lam = enumerator / variance
-        f_by_p = p_lam_norm * f_lam
+    if plot:
+        plt.plot(x, f)
+        plt.plot(x, ma.sum(net_img, axis=0) - 20000, 'r-')
+        plt.show()
 
-        v_img = ma.abs(s_img + f_by_p) / cam_cfg.gain + v_0
-        residual = (n_img - f_by_p)**2 / v_img
-        pixel_rejected = False
-        residual.mask = p_lam_norm.mask
-        # Horne is using 25 here, however, this seems to reject too much as the
-        # resulting spectrum is distorted. 300 appears to reliably kill cosmic rays.
-        rej_idx = ma.nonzero(residual > 300)
-        max_res = None
-        x_max = None
-        y_max = None
-        for y, x in zip(rej_idx[0], rej_idx[1]):
-            res = residual[y, x]
-            if max_res is None or (res > max_res and n_img[y, x] > f_by_p[y, x]):
-                max_res = res
-                y_max = y
-                x_max = x
-        if max_res is not None:
-            pixel_rejected = True
-            p_lam_norm[y_max, x_max] = ma.masked
-
-    if callback:
-        elapsed = time() - start
-        sigma = ma.sqrt(variance)
-        snr = f_lam / sigma
-        min_snr = ma.min(snr)
-        if callback(start_with + budget, f'Rejected cosmic ray hits in {elapsed:5.3f}s. SNR >= {min_snr:6.0f}.'):
-            return None
-    return np.asarray(f_lam)
+    return f
 
 
 if __name__ == '__main__':
