@@ -6,7 +6,7 @@ from typing import Tuple, Union
 import wx
 from astropy.io import fits
 
-import calib
+import calib2
 import fitsheader
 import response
 import util
@@ -139,7 +139,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, AavsoCfgGui(self)), aavso_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, AavsoObscodeCfgGui(self)), obs_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, LocationCfgGui(self)), loc_item)
-        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib.CalibConfigurator(self)), calib_cfg_item)
+        self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, calib2.CalibConfigurator(self)), calib_cfg_item)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_annotate, annotate_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_rectify, rectify_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_measure, measure_tool)
@@ -308,7 +308,7 @@ class Main(wx.Frame):
 
     def _show_calib_file_dialog(self, event: wx.CommandEvent):
         menu, item = Main._disable_before_open(event)
-        dialog = calib.CalibFileDialog(self)
+        dialog = calib2.CalibFileDialog(self)
 
         def _on_calib_file_close(evt: wx.ShowEvent):
             if evt.IsShown():
@@ -324,35 +324,19 @@ class Main(wx.Frame):
 
             with fits.open(calib_file) as hdu_l:
                 data = hdu_l[0].data
-            peaks, fwhms = calib.find_peaks(data)
-            calib_dialog = calib.CalibDialog(self, data, peaks, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+            calib_dialog = calib2.CalibDialog(self, data, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 
             def _on_calib_close(calib_show_evt: wx.ShowEvent):
                 if calib_show_evt.IsShown():
                     return
                 poly = calib_dialog.poly
+                resolution = calib_dialog.resolution
                 calib_dialog.Destroy()
                 if poly is not None:
-                    center = data.size / 2
-                    min_dist = None
-                    prev_peak = None
-                    prev_fwhm = None
-                    for peak, fwhm in zip(peaks, fwhms):
-                        dist = abs(center - peak)
-                        if min_dist is None or dist < min_dist:
-                            min_dist = dist
-                        elif dist > min_dist:
-                            lambda_peak = poly(prev_peak)
-                            delta_lambda = poly(prev_peak + prev_fwhm / 2) - poly(prev_peak - prev_fwhm / 2)
-                            resolution = lambda_peak / delta_lambda
-                            break
-                        prev_peak = peak
-                        prev_fwhm = fwhm
-
                     # noinspection PyUnboundLocalVariable
-                    calib.apply_calibration(calib_file, poly, output_path, resolution)
+                    calib2.apply_calibration(calib_file, poly, output_path, resolution)
                     if pgm_file:
-                        calib.apply_calibration(pgm_file, poly, output_path, resolution)
+                        calib2.apply_calibration(pgm_file, poly, output_path, resolution)
                 menu.Enable(item, True)
 
             calib_dialog.Bind(wx.EVT_SHOW, _on_calib_close)
