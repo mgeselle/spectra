@@ -1,7 +1,7 @@
 import wx
 from astropy.io import fits
 import functools
-from math import asin, sqrt, degrees
+from math import asin, sqrt, degrees, radians
 import numpy as np
 import numpy.typing as npt
 from pathlib import Path
@@ -72,16 +72,10 @@ class Rotate:
         else:
             # Using prefiltering introduces artifacts
             data_new = rotate(data, self._angle, reshape=False, prefilter=False, order=5)
-            min_y = 0
-            while min_y < data_new.shape[0] / 4 and data_new[min_y, 0] == 0.0:
-                min_y += 1
-            max_y = data_new.shape[0] - 1
-            while max_y > 3 * data_new.shape[0] / 4 and data_new[max_y, 0] == 0.0:
-                max_y -= 1
-            if min_y > 0:
-                data_new = data_new[min_y:data_new.shape[0] - 1 - min_y, :]
-            elif max_y < data_new.shape[0] - 1:
-                data_new = data_new[data_new.shape[0] - 1 - max_y:max_y, :]
+            y_blank = int(abs(data.shape[1] / 2 * radians(self._angle)))
+            if y_blank == 0:
+                y_blank = 1
+            data_new = data_new[y_blank:-y_blank, :]
 
         hdu_new = fits.PrimaryHDU(data_new, header)
         output_file = output_path / input_file.name
