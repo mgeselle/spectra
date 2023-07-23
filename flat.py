@@ -8,6 +8,8 @@ from numpy.polynomial import Polynomial
 from pathlib import Path
 from typing import Union, Any, Tuple, Sequence
 
+import matplotlib.pyplot as plt
+
 
 @dataclass(frozen=True)
 class FlatParam:
@@ -74,11 +76,25 @@ def _compute_flat(flat_path: Path) -> FlatParam:
         cropped_data = data[y_lo:y_hi, x_lo:x_hi]
     flat_hdu_l.close()
 
-    xdata = np.arange(0, cropped_data.shape[1])
     fitted = np.empty(cropped_data.shape, dtype=np.float64)
+    xdata = np.arange(0, cropped_data.shape[1])
     for i in range(0, cropped_data.shape[0]):
-        poly = Polynomial.fit(xdata, cropped_data[i, :], deg=4)
+        poly = Polynomial.fit(xdata, cropped_data[i, :], deg=5)
         # noinspection PyCallingNonCallable
         fitted[i, :] = poly(xdata)
+        # plt.plot(xdata, cropped_data[i, :], 'b-')
+        # plt.plot(xdata, fitted[i, :], 'r-')
+        # plt.show()
+    mean_signal = np.mean(cropped_data, axis=0)
     cropped_data = cropped_data / fitted
+    x_min = 0
+    for x in range(0, mean_signal.shape[0]):
+        if mean_signal[x] > 10000:
+            x_min = x
+            break
+    if x_min != 0:
+        for y in range(0, cropped_data.shape[0]):
+            cropped_data[y, :] = cropped_data[y, :] / cropped_data[y, x_min]
+            cropped_data[y, 0:x_min] = 1.0
+
     return FlatParam(cropped_data, x_lo, y_lo, x_hi, y_hi)
