@@ -13,12 +13,14 @@ import numpy.typing as npt
 import scipy.optimize as sco
 import scipy.signal as scs
 import wx
+import wx.lib.intctrl as wxli
 from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 from astroquery.simbad import Simbad
 
 import config
 import specview
+import wxutil
 
 
 class ContinuumDialog(wx.Dialog):
@@ -324,6 +326,116 @@ def _compute_response_filt(rec_data: npt.NDArray[Any], ref_data: npt.NDArray[Any
     return scs.medfilt(raw_response, 31)
 
 
+class ResponseFlatDialog(wx.Dialog):
+    def __init__(self, parent: wx.Window, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.SetTitle("Response from Flat")
+
+        text_chars = 40
+        flat_label = wx.StaticText(self, wx.ID_ANY, "Flat Spectrum:")
+        self._flat_text = wx.TextCtrl(self)
+        wxutil.size_text_by_chars(self._flat_text, text_chars)
+        folder_bmp = wx.ArtProvider.GetBitmap(wx.ART_FOLDER_OPEN, wx.ART_BUTTON)
+        flat_btn = wx.BitmapButton(self, wx.ID_ANY, bitmap=folder_bmp)
+        flat_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        flat_sizer.Add(self._flat_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        flat_sizer.Add(flat_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+
+        out_label = wx.StaticText(self, wx.ID_ANY, "Output Directory:")
+        self._out_text = wx.TextCtrl(self)
+        wxutil.size_text_by_chars(self._out_text, text_chars)
+        out_btn = wx.BitmapButton(self, wx.ID_ANY, bitmap=folder_bmp)
+        out_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        out_sizer.Add(self._out_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        out_sizer.Add(out_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+
+        temp_k_label = wx.StaticText(self, wx.ID_ANY, "Temperature [K]:")
+        self._temp_k_ctrl = wxli.IntCtrl(self, wx.ID_ANY, min=1000, max=4000, allow_none=True)
+        wxutil.size_text_by_chars(self._temp_k_ctrl, 5)
+
+        grid = wx.FlexGridSizer(rows=3, cols=2, vgap=5, hgap=5)
+        grid.Add(flat_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        grid.Add(flat_sizer, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        grid.Add(out_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        grid.Add(out_sizer, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        grid.Add(temp_k_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+        grid.Add(self._temp_k_ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
+
+        btn_sizer = self.CreateSeparatedButtonSizer(wx.OK | wx.CANCEL)
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(grid, 0, wx.ALL, border=10)
+        vbox.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, border=10)
+
+        self.SetSizer(vbox)
+        self.Fit()
+        sz = self.GetBestSize()
+        self.SetSizeHints(sz.x, sz.y, sz.x, sz.y)
+
+        self.Bind(wx.EVT_BUTTON, self._on_dlg_button)
+        flat_btn.Bind(wx.EVT_BUTTON, self._on_flat_btn)
+        out_btn.Bind(wx.EVT_BUTTON, self._on_out_btn)
+
+    @property
+    def flat_file(self):
+        return Path(self._flat_text.GetValue())
+
+    @property
+    def out_dir(self):
+        return Path(self._out_text.GetValue())
+
+    @property
+    def temp_k(self):
+        return self._temp_k_ctrl.GetValue()
+
+    def _on_flat_btn(self, event: wx.Event):
+        flat = wxutil.select_file(self, "Select Flat Spectrum")
+        if flat:
+            self._flat_text.SetValue(flat)
+
+    def _on_out_btn(self, event: wx.Event):
+        out_dir = wxutil.select_dir(self, True, "Choose Output Directory")
+        if out_dir:
+            self._out_text.SetValue(out_dir)
+
+    def _on_dlg_button(self, event: wx.CommandEvent):
+        if event.GetId() == wx.ID_CANCEL:
+            if self.IsModal():
+                self.EndModal(wx.CANCEL)
+            else:
+                self.Show(False)
+            return
+        elif event.GetId() == wx.ID_OK:
+            if not self._flat_text.GetValue() or not self._out_text.GetValue() or not self._temp_k_ctrl.GetValue():
+                return
+            if self.IsModal():
+                self.EndModal(wx.OK)
+            else:
+                self.Show(False)
+            return
+
+
+def create_response_flat(flat_path: Path, temp_k: int, output_path: Path):
+    with fits.open(flat_path) as flat:
+        flat_header = flat[0].header
+        flat_data = flat[0].data
+
+    flat_wl_step = flat_header['CDELT1']
+    flat_wl_start = flat_header['CRVAL1'] + (1 - flat_header['CRPIX1']) * flat_wl_step
+    flat_wl_end = flat_wl_start + (flat_data.shape[0] - 1) * flat_wl_step
+    flat_wl = np.linspace(flat_wl_start, flat_wl_end, flat_data.shape[0])
+
+    planck = 1 / (np.power(flat_wl, 5) * (np.exp((ac.h * ac.c / (ac.k_B * temp_k)).value / flat_wl) - 1))
+    max_planck = np.max(planck)
+    planck = planck / max_planck
+
+    response = flat_data / planck
+    resp_max = np.max(response)
+    response = response / resp_max
+
+    fits.PrimaryHDU(response, flat_header).writeto(output_path / ('response_' + flat_path.name), overwrite=True)
+
+
 def apply_response(resp_path: Path, pgm_path: Path, output_path: Path):
     with fits.open(resp_path) as resp:
         resp_header = resp[0].header
@@ -373,7 +485,8 @@ def apply_response(resp_path: Path, pgm_path: Path, output_path: Path):
     out_header = fits.Header(pgm_header)
     out_header['CRPIX1'] = 1.0
     out_header['CRVAL1'] = pgm_lam_start
-    out_header.add_history(f"Response corrected using response generated from {resp_header['OBJNAME']}")
+    if 'OBJNAME' in resp_header:
+        out_header.add_history(f"Response corrected using response generated from {resp_header['OBJNAME']}")
 
     fits.PrimaryHDU(result, out_header).writeto(output_path / pgm_path.name, overwrite=True)
 

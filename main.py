@@ -61,6 +61,7 @@ class Main(wx.Frame):
         self._spec_ops_menu = wx.Menu()
         calib_item = self._spec_ops_menu.Append(wx.ID_ANY, '&Wavelength Calibration')
         calc_resp_item = self._spec_ops_menu.Append(wx.ID_ANY, 'Calculate &Response')
+        resp_flat_item = self._spec_ops_menu.Append(wx.ID_ANY, 'Response from &Flat Spectrum')
         apply_resp_item = self._spec_ops_menu.Append(wx.ID_ANY, '&Apply Response')
         menubar.Append(self._spec_ops_menu, '&Spectrum Ops')
 
@@ -132,6 +133,7 @@ class Main(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, Reduce(self)), reduce_item)
         self.Bind(wx.EVT_MENU, self._show_calib_file_dialog, calib_item)
         self.Bind(wx.EVT_MENU, self._run_calc_response, calc_resp_item)
+        self.Bind(wx.EVT_MENU, self._show_flat_response_dlg, resp_flat_item)
         self.Bind(wx.EVT_MENU, self._run_apply_response, apply_resp_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, TelescopeCfgGui(self)), telescope_item)
         self.Bind(wx.EVT_MENU, lambda evt: Main._show_dialog(evt, SpectrometerCfgGui(self)), spectro_item)
@@ -315,6 +317,7 @@ class Main(wx.Frame):
                 return
             calib_file = dialog.calib_file
             pgm_file = dialog.pgm_file
+            flat_file = dialog.flat_file
             output_path = dialog.output_dir
 
             dialog.Destroy()
@@ -337,6 +340,8 @@ class Main(wx.Frame):
                     calib2.apply_calibration(calib_file, poly, output_path, resolution)
                     if pgm_file:
                         calib2.apply_calibration(pgm_file, poly, output_path, resolution)
+                    if flat_file:
+                        calib2.apply_calibration(flat_file, poly, output_path, resolution)
                 menu.Enable(item, True)
 
             calib_dialog.Bind(wx.EVT_SHOW, _on_calib_close)
@@ -369,6 +374,13 @@ class Main(wx.Frame):
                 menu.Enable(item, True)
                 return
             response.create_response(self, rec_path, ref_path, out_path)
+        menu.Enable(item, True)
+
+    def _show_flat_response_dlg(self, event: wx.CommandEvent):
+        menu, item = Main._disable_before_open(event)
+        with response.ResponseFlatDialog(self) as dlg:
+            if dlg.ShowModal() == wx.OK:
+                response.create_response_flat(dlg.flat_file, dlg.temp_k, dlg.out_dir)
         menu.Enable(item, True)
 
     def _run_apply_response(self, event: wx.CommandEvent):

@@ -371,10 +371,10 @@ class CalibConfigurator(wx.Dialog):
         self._ref_entry = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._ref_entry, 20)
         lambda_label = wx.StaticText(self, wx.ID_ANY, u'\u03bb Range [\u00c5]:')
-        self._lam_low = wxli.IntCtrl(self, min=3000, max=8500)
+        self._lam_low = wxli.IntCtrl(self, min=3000, max=9200)
         wxutil.size_text_by_chars(self._lam_low, 6)
         dash_label = wx.StaticText(self, wx.ID_ANY, ' .. ')
-        self._lam_high = wxli.IntCtrl(self, min=3000, max=8500)
+        self._lam_high = wxli.IntCtrl(self, min=3000, max=9200)
         wxutil.size_text_by_chars(self._lam_high, 6)
         lam_sizer = wx.BoxSizer(wx.HORIZONTAL)
         lam_sizer.Add(self._lam_low, 0, 0, 0)
@@ -466,7 +466,7 @@ class CalibConfigurator(wx.Dialog):
             self._event_ack.wait()
             self._event_ack.clear()
             try:
-                ref_spectrum = Nist.query(3000 * u.AA, 8500 * u.AA, linename=species, wavelength_type='vac+air')
+                ref_spectrum = Nist.query(3000 * u.AA, 9200 * u.AA, linename=species, wavelength_type='vac+air')
             except Exception:
                 failed.append(species)
             else:
@@ -537,6 +537,9 @@ class CalibFileDialog(wx.Dialog):
         pgm_label = wx.StaticText(self, wx.ID_ANY, 'Program Spectrum:')
         self._pgm_combo = wx.ComboBox(self, style=wx.CB_READONLY | wx.CB_SORT)
         wxutil.size_text_by_chars(self._pgm_combo, text_chars)
+        flat_label = wx.StaticText(self, wx.ID_ANY, 'Flat Spectrum:')
+        self._flat_combo = wx.ComboBox(self, style=wx.CB_READONLY | wx.CB_SORT)
+        wxutil.size_text_by_chars(self._flat_combo, text_chars)
 
         out_dir_label = wx.StaticText(self, wx.ID_ANY, 'Output Directory:')
         self._out_dir_text = wx.TextCtrl(self)
@@ -547,13 +550,15 @@ class CalibFileDialog(wx.Dialog):
         out_dir_sizer.Add(self._out_dir_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
         out_dir_sizer.Add(out_dir_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_LEFT)
 
-        grid = wx.FlexGridSizer(rows=4, cols=2, vgap=5, hgap=5)
+        grid = wx.FlexGridSizer(rows=5, cols=2, vgap=5, hgap=5)
         grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(in_dir_sizer, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(calib_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._calib_combo, 0, wx.ALIGN_LEFT, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(pgm_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._pgm_combo, 0, wx.ALIGN_LEFT, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(flat_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self._flat_combo, 0, wx.ALIGN_LEFT, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(out_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(out_dir_sizer, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
@@ -576,6 +581,7 @@ class CalibFileDialog(wx.Dialog):
 
         self._calib_file = None
         self._pgm_file = None
+        self._flat_file = None
         self._output_dir = None
 
     # noinspection PyUnusedLocal
@@ -591,6 +597,9 @@ class CalibFileDialog(wx.Dialog):
             self._pgm_combo.SetItems([''])
             self._pgm_combo.SetValue('')
             self._pgm_combo.SetItems([])
+            self._flat_combo.SetItems([''])
+            self._flat_combo.SetValue('')
+            self._flat_combo.SetItems([])
             return
         items = []
         for candidate in input_path.iterdir():
@@ -607,6 +616,9 @@ class CalibFileDialog(wx.Dialog):
         self._pgm_combo.SetItems([''])
         self._pgm_combo.SetValue('')
         self._pgm_combo.SetItems(items)
+        self._flat_combo.SetItems([''])
+        self._flat_combo.SetValue('')
+        self._flat_combo.SetItems(items)
 
     def _on_dir_btn(self, event: wx.CommandEvent):
         if event.GetId() == self._in_dir_btn_id:
@@ -626,6 +638,7 @@ class CalibFileDialog(wx.Dialog):
         if event.GetId() == wx.ID_CANCEL:
             self._calib_file = None
             self._pgm_file = None
+            self._flat_file = None
             self._output_dir = None
             if self.IsModal():
                 self.EndModal(wx.CANCEL)
@@ -659,6 +672,9 @@ class CalibFileDialog(wx.Dialog):
         pgm_name = self._pgm_combo.GetValue().strip()
         if pgm_name:
             self._pgm_file = input_path / pgm_name
+        flat_name = self._flat_combo.GetValue().strip()
+        if flat_name:
+            self._flat_file = input_path / flat_name
         self._output_dir = output_path
         self.Show(False)
 
@@ -669,6 +685,10 @@ class CalibFileDialog(wx.Dialog):
     @property
     def pgm_file(self) -> Union[Path, None]:
         return self._pgm_file
+
+    @property
+    def flat_file(self) -> Union[Path, None]:
+        return self._flat_file
 
     @property
     def output_dir(self) -> Union[Path, None]:

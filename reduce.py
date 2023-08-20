@@ -25,13 +25,17 @@ class ReduceParams:
     cam_cfg_name: str
     header_overrides: Dict
     # Optional explicit limits for simple extraction without rotation
-    limits: Union[None , Tuple[int, int]] = None
+    limits: Union[None, Tuple[int, int]] = None
     # We might just want to look at a calibration spectrum -> the other files might not be specified
-    bias_path: Union[None , Path] = None
-    dark_files: Union[None , Sequence[Path]] = None
-    flat_path: Union[None , Path] = None
-    pgm_files: Union[None , Path , Sequence[Path]] = None
+    bias_path: Union[None, Path] = None
+    dark_files: Union[None, Sequence[Path]] = None
+    flat_path: Union[None, Path] = None
+    pgm_files: Union[None, Path, Sequence[Path]] = None
     decimate: bool = False,
+    # When we have a flat image of a source with a defined temperature, we might want to use the spectrum together with
+    # Planck's law to combine the flat correction together with instrument response into a single step rather than
+    # applying the traditional flat correction.
+    flat_spectrum: bool = False,
     run_to_phase: str = 'EXTRACT'
 
 
@@ -86,6 +90,8 @@ class Reduce(TaskDialog):
         self._flat_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._flat_text, text_chars)
 
+        self._flat_spectrum_cb = wx.CheckBox(self, wx.ID_ANY, 'Create flat spectrum')
+
         calib_label = wx.StaticText(self, wx.ID_ANY, 'Calibration Pattern:')
         self._calib_text = wx.TextCtrl(self)
         wxutil.size_text_by_chars(self._calib_text, text_chars)
@@ -132,7 +138,7 @@ class Reduce(TaskDialog):
         wxutil.size_text_by_chars(self._obj_entry, text_chars)
 
         vbox = wx.BoxSizer(wx.VERTICAL)
-        grid = wx.FlexGridSizer(rows=13, cols=2, hgap=5, vgap=5)
+        grid = wx.FlexGridSizer(rows=14, cols=2, hgap=5, vgap=5)
         grid.Add(in_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(in_dir_sizer, 1, wx.ALIGN_LEFT)
         grid.Add(master_dir_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -145,6 +151,8 @@ class Reduce(TaskDialog):
         grid.Add(self._dark_text, 1, wx.ALIGN_LEFT)
         grid.Add(flat_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._flat_text, 1, wx.ALIGN_LEFT)
+        grid.Add(wx.StaticText(self, wx.ID_ANY, ""), 0, wx.ALIGN_LEFT)
+        grid.Add(self._flat_spectrum_cb, 1, wx.ALIGN_LEFT)
         grid.Add(calib_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self._calib_text, 1, wx.ALIGN_LEFT)
         grid.Add(pgm_label, 0, wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
@@ -288,6 +296,7 @@ class Reduce(TaskDialog):
                                      flat_path=flat_file,
                                      pgm_files=pgm_files,
                                      decimate=self._decimate_cb.GetValue(),
+                                     flat_spectrum=self._flat_spectrum_cb.GetValue(),
                                      run_to_phase=self._run_to_combo.GetValue())
 
         progress_limit = 100
@@ -301,7 +310,7 @@ class Reduce(TaskDialog):
         if not params.pgm_files or params.limits:
             # No rotation
             num_steps -= 1
-        if not params.flat_path:
+        if not params.flat_path or (params.flat_path and params.flat_spectrum):
             # No flat correction
             num_steps -= 1
         if params.decimate:
@@ -343,7 +352,7 @@ class Reduce(TaskDialog):
                 return
             progress += budget_step
 
-        if params.flat_path and params.run_to_phase not in ['DARK', 'ROTATE']:
+        if params.flat_path and params.run_to_phase not in ['DARK', 'ROTATE'] and not params.flat_spectrum:
             self.send_progress(progress, 'Applying flat correction.')
             previous_output = output
             output = self._apply_flat_correction(params, previous_output)
@@ -443,6 +452,8 @@ class Reduce(TaskDialog):
             slt_input_files = [calib_file]
             if params.pgm_files:
                 slt_input_files.extend([input_dir / f.name for f in params.pgm_files])
+            if params.flat_spectrum:
+                slt_input_files.extend([input_dir / params.flat_path.name])
         else:
             calib_file = params.calib_file
             slt_input_files = [calib_file]
@@ -486,6 +497,13 @@ class Reduce(TaskDialog):
             calib_file = input_dir / params.calib_file.name
         else:
             calib_file = params.calib_file
+        if params.flat_path and params.flat_spectrum:
+            if input_dir:
+                flat_file = input_dir / params.flat_path.name
+            else:
+                flat_file = params.flat_path
+        else:
+            flat_file = None
 
         if params.pgm_files and not params.limits:
             d_lo, d_hi = ex_optimal(pgm_files, params.cam_cfg_name, params.output_path,
@@ -494,6 +512,8 @@ class Reduce(TaskDialog):
                                     budget=budget_step - 1, start_with=progress)
             if not self.cancel_flag.is_set():
                 ex_simple(calib_file, (d_lo, d_hi), params.output_path)
+                if flat_file:
+                    ex_simple(flat_file, (d_lo, d_hi), params.output_path)
         else:
             if pgm_files:
                 ex_simple(pgm_files, params.limits, params.output_path)
