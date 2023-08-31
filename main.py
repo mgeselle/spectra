@@ -321,11 +321,16 @@ class Main(wx.Frame):
             output_path = dialog.output_dir
 
             dialog.Destroy()
-            if not calib_file:
+            if not calib_file and not pgm_file:
                 menu.Enable(item, True)
                 return
 
-            with fits.open(calib_file) as hdu_l:
+            if calib_file:
+                calib_input = calib_file
+            else:
+                calib_input = pgm_file
+
+            with fits.open(calib_input) as hdu_l:
                 data = hdu_l[0].data
             calib_dialog = calib2.CalibDialog(self, data, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
 
@@ -337,7 +342,8 @@ class Main(wx.Frame):
                 calib_dialog.Destroy()
                 if poly is not None:
                     # noinspection PyUnboundLocalVariable
-                    calib2.apply_calibration(calib_file, poly, output_path, resolution)
+                    if calib_file:
+                        calib2.apply_calibration(calib_file, poly, output_path, resolution)
                     if pgm_file:
                         calib2.apply_calibration(pgm_file, poly, output_path, resolution)
                     if flat_file:

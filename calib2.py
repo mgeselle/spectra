@@ -52,6 +52,8 @@ class SpecSelector(spv.SpecEvtHandler):
         self._selected_line = None
         self._selected_entry = None
 
+        used_lines = Config.get().get_used_lines().split(',')
+        self._absorption = len(used_lines) == 1 and used_lines[0] == 'H2O'
         lines = SpecSelector._load_lines()
         self._lambda_by_text = dict()
         self._index_by_lambda = dict()
@@ -101,7 +103,7 @@ class SpecSelector(spv.SpecEvtHandler):
     def resolution(self, calib: Callable[[npt.NDArray], npt.NDArray]):
         min_width = None
         for peak in [x.pixel for x in self._entries if x.wave_len is not None]:
-            _, width = fit_peak(self._data.data, peak)
+            _, width = fit_peak(self._data.data, peak, self._absorption)
             if width is not None and (min_width is None or width < min_width):
                 min_width = width
         if min_width is None:
@@ -136,8 +138,14 @@ class SpecSelector(spv.SpecEvtHandler):
                 x_low = 0
             if x_hi > self._data.data.shape[0] - 1:
                 x_hi = self._data.data.shape[0] - 1
+            data_min = np.min(self._data.data[x_low:x_hi])
             data_max = np.max(self._data.data[x_low:x_hi])
-            peaks, props = signal.find_peaks(self._data.data[x_low:x_hi], distance=4, prominence=data_max/2)
+            prominence = (data_max - data_min) / 2
+            if self._absorption:
+                peak_data = -(self._data.data[x_low:x_hi] - data_max)
+            else:
+                peak_data = self._data.data[x_low:x_hi]
+            peaks, props = signal.find_peaks(peak_data, distance=4, prominence=prominence)
             min_dist = None
             min_peak = None
             for peak in peaks:
@@ -653,8 +661,6 @@ class CalibFileDialog(wx.Dialog):
         if not input_path.is_dir():
             return
         calib_name = self._calib_combo.GetValue().strip()
-        if not calib_name:
-            return
 
         output_dir = self._out_dir_text.GetValue()
         if not output_dir:
@@ -668,7 +674,10 @@ class CalibFileDialog(wx.Dialog):
                 dlg.ShowModal()
             return
 
-        self._calib_file = input_path / calib_name
+        if not calib_name:
+            self._calib_file = None
+        else:
+            self._calib_file = input_path / calib_name
         pgm_name = self._pgm_combo.GetValue().strip()
         if pgm_name:
             self._pgm_file = input_path / pgm_name
@@ -723,7 +732,7 @@ def find_peaks(data: npt.NDArray[Any]) -> Union[Tuple[npt.NDArray[Any], Sequence
     return np.array(result), fwhms
 
 
-def fit_peak(data: npt.NDArray[Any], peak):
+def fit_peak(data: npt.NDArray[Any], peak: int, absorption: bool):
     left_i = peak - 10
     if left_i < 0:
         left_i = 0
@@ -737,8 +746,11 @@ def fit_peak(data: npt.NDArray[Any], peak):
     def func(x, a, sig, cen, c):
         return a * np.exp(-0.5 * ((x - cen) / sig)**2) + c
 
-    c_i = 0
-    a_i = data[peak]
+    if absorption:
+        c_i = np.max(ydata)
+    else:
+        c_i =  np.min(ydata)
+    a_i = data[peak] - c_i
     factor = 2 * math.sqrt(2 * math.log(2))
     sig_i = 4 / (2 * factor)
     try:
