@@ -10,6 +10,10 @@ from threading import Lock
 from typing import List, Union, Sequence, Tuple
 
 
+MIN_WAVELEN = 3000
+MAX_WAVELEN = 9200
+
+
 @dataclass
 class CameraConfig:
     ron: float

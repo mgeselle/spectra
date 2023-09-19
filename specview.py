@@ -624,6 +624,8 @@ class Specview(wx.Panel):
 
         self._event_handler = None
         self._current_max = None
+        self._min_wavelen = None
+        self._max_wavelen = None
 
     def add_spectrum(self, data: npt.NDArray[Any], header: Union[fits.Header, None] = None,
                      fmt: str = '-b') -> str:
@@ -634,9 +636,13 @@ class Specview(wx.Panel):
                                 lambda_ref + (data.shape[0] - 1) * lambda_step,
                                 data.shape[0])
             unit = u'\u00c5'
+            self._min_wavelen = lambda_ref
+            self._max_wavelen = xdata[data.shape[0] - 1]
         else:
             xdata = np.arange(data.shape[0])
             unit = 'Pixels'
+            self._min_wavelen = None
+            self._max_wavelen = None
         self._axes.set_xlabel(unit)
         return self.add_markers(xdata, data, fmt=fmt, header=header)
 
@@ -661,6 +667,15 @@ class Specview(wx.Panel):
 
         return line_id
 
+    def add_vlines(self, xdata, ymax, color):
+        result = self._axes.vlines(xdata, np.zeros(len(xdata)), ymax, colors=[color])
+        self._canvas.draw_idle()
+        return result
+
+    def remove_vlines(self, line_coll):
+        line_coll.remove()
+        self._canvas.draw_idle()
+
     def clear(self):
         for item in self._lines.items():
             item[1].line.remove()
@@ -670,6 +685,8 @@ class Specview(wx.Panel):
         self._canvas.draw_idle()
         self._xdata = None
         self._current_max = None
+        self._min_wavelen = None
+        self._max_wavelen = None
 
     def set_spectrum_data(self, spec_id: str, data: npt.NDArray[Any]):
         if spec_id not in self._lines:
@@ -697,6 +714,14 @@ class Specview(wx.Panel):
     @property
     def current_max(self):
         return self._current_max
+
+    @property
+    def min_wavelen(self):
+        return self._min_wavelen
+
+    @property
+    def max_wavelen(self):
+        return self._max_wavelen
 
 
 if __name__ == '__main__':

@@ -8,6 +8,7 @@ from astropy.io import fits
 
 import calib2
 import fitsheader
+import lineid
 import response
 import util
 import wxutil
@@ -30,6 +31,7 @@ ID_ANNOTATE = wx.NewIdRef()
 ID_RECTIFY = wx.NewIdRef()
 ID_MEASURE = wx.NewIdRef()
 ID_CROP_SPEC = wx.NewIdRef()
+ID_LINEID = wx.NewIdRef()
 
 
 class Main(wx.Frame):
@@ -100,11 +102,17 @@ class Main(wx.Frame):
         crop_spec_tool = self._toolbar.AddCheckTool(ID_CROP_SPEC.GetId(), 'Crop', crop_spec_bmp,
                                                     shortHelp='Crop spectrum')
 
+        lineid_bmp = wx.Bitmap()
+        lineid_bmp.LoadFile((str(resource_dir / 'magglass@1x.png')))
+        lineid_tool = self._toolbar.AddCheckTool(ID_LINEID.GetId(), 'Line ID', lineid_bmp,
+                                                 shortHelp='Identify Spectral Lines')
+
         self._toolbar.Realize()
         self._toolbar.EnableTool(ID_ANNOTATE.GetId(), False)
         self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
         self._toolbar.EnableTool(ID_MEASURE.GetId(), False)
         self._toolbar.EnableTool(ID_CROP_SPEC.GetId(), False)
+        self._toolbar.EnableTool(ID_LINEID.GetId(), False)
 
         self._content_pane = wx.Panel(self)
         self._image_display = ImageDisplay(self._content_pane)
@@ -146,6 +154,7 @@ class Main(wx.Frame):
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_rectify, rectify_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_measure, measure_tool)
         self._toolbar.Bind(wx.EVT_MENU, self._toggle_crop_spec, crop_spec_tool)
+        self._toolbar.Bind(wx.EVT_MENU, self._show_lineid_dlg, lineid_tool)
         self.Bind(EVT_ID_FILE_READY, lambda evt: self._file_menu.Enable(ID_SAVE.GetId(), True))
 
         display = wx.Display()
@@ -230,6 +239,17 @@ class Main(wx.Frame):
             self._toolbar.EnableTool(ID_RECTIFY.GetId(), False)
             self._toolbar.EnableTool(ID_MEASURE.GetId(), False)
             self._toolbar.EnableTool(ID_CROP_SPEC.GetId(), False)
+
+        self._toolbar.EnableTool(ID_LINEID.GetId(), self._specview_visible and self._specview.min_wavelen is not None)
+        lineid.clear_lines()
+        if self._specview_visible:
+            if lineid.is_dialog_visible():
+                if self._specview.min_wavelen is not None:
+                    lineid.show_dialog(self._specview, self, self._specview.min_wavelen, self._specview.max_wavelen)
+                else:
+                    lineid.hide_dialog()
+        elif lineid.is_dialog_visible():
+            lineid.hide_dialog()
 
     def _add_spectrum(self, event: wx.CommandEvent):
         file_name = wxutil.select_file(self)
@@ -444,6 +464,8 @@ class Main(wx.Frame):
         self._log_window.Show()
         wx.LogMessage("Showing Log window.")
 
+    def _show_lineid_dlg(self, event: wx.CommandEvent):
+        lineid.show_dialog(self._specview, self, self._specview.min_wavelen, self._specview.max_wavelen)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,8 @@ import numpy.polynomial as poly
 import numpy.typing as npt
 import scipy.optimize as optimize
 import scipy.signal as signal
+
+import config
 import specview as spv
 import wx
 import wx.grid as grid
@@ -419,7 +421,7 @@ class CalibConfigurator(wx.Dialog):
         self._progress = None
         self._error_msg = None
         # This is used for synchronising between the event handlers.
-        # Apparently the there is some parallelism involved in handling events. This
+        # Apparently there is some parallelism involved in handling events. This
         # wreaks havoc with when exactly to destroy child dialogs.
         self._event_ack = threading.Event()
 
@@ -474,7 +476,8 @@ class CalibConfigurator(wx.Dialog):
             self._event_ack.wait()
             self._event_ack.clear()
             try:
-                ref_spectrum = Nist.query(3000 * u.AA, 9200 * u.AA, linename=species, wavelength_type='vac+air')
+                ref_spectrum = Nist.query(config.MIN_WAVELEN * u.AA, config.MAX_WAVELEN * u.AA,
+                                          linename=species, wavelength_type='vac+air')
             except Exception:
                 failed.append(species)
             else:
